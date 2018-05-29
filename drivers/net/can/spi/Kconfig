@@ -14,4 +14,14 @@ config CAN_MCP251X
 	  Driver for the Microchip MCP251x and MCP25625 SPI CAN
 	  controllers.
 
+config CAN_TCAN4X5X
+	tristate "Texas Instruments TCAN4X5X SPI CAN controllers"
+	depends on HAS_DMA
+	---help---
+	  Driver for the Texas Instruments TCAN4X5X SPI CAN controllers.
+config CAN_DBG_TCAN4X5X
+	tristate "Texas Instruments TCAN4X5X SPI CAN controllers"
+	depends on HAS_DMA
+	---help---
+	  Driver for the Texas Instruments TCAN4X5X SPI CAN controllers.
 endmenu
