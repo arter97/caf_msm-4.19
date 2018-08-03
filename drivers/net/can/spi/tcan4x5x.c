@@ -178,7 +178,8 @@
 #define TCAN4X5X_MCAN_IR_RF0F		BIT(2)
 #define TCAN4X5X_MCAN_IR_RF0W		BIT(1)
 #define TCAN4X5X_MCAN_IR_RF0N		BIT(0)
-#define TCAN4X5X_ENABLE_MCAN_INT	(TCAN4X5X_MCAN_IR_RF0N | \
+#define TCAN4X5X_ENABLE_MCAN_INT	(TCAN4X5X_MCAN_IR_TEFN | \
+					TCAN4X5X_MCAN_IR_RF0N | \
 					TCAN4X5X_MCAN_IR_RF1N | \
 					TCAN4X5X_MCAN_IR_RF0F | \
 					TCAN4X5X_MCAN_IR_RF1F)
@@ -578,13 +579,15 @@ static irqreturn_t tcan4x5x_can_ist(int irq, void *dev_id)
 	struct spi_device *spi = tcan4x5x->spi;
 	struct net_device *net = tcan4x5x->net;
 	enum can_state new_state;
-	int intf, eflag;
+	int intf, eflag, mcan_intf;
 
 	mutex_lock(&tcan4x5x->tcan4x5x_lock);
 
 	regmap_read(tcan4x5x->regmap, TCAN4X5X_INT_FLAGS, &intf);
 	if (intf & TCAN4X5X_MCAN_INT)
 		tcan4x5x_hw_rx(tcan4x5x);
+
+	regmap_read(tcan4x5x->regmap, TCAN4X5X_MCAN_INT_FLAG, &mcan_intf);
 
 	regmap_read(tcan4x5x->regmap, TCAN4X5X_STATUS, &eflag);
 	/* Update can state */
@@ -662,6 +665,17 @@ static irqreturn_t tcan4x5x_can_ist(int irq, void *dev_id)
 			netdev_dbg(tcan4x5x->net, "Bus Error\n");
 			netif_rx_ni(skb);
 		}
+	}
+
+	if (mcan_intf & TCAN4X5X_MCAN_IR_TEFN) {
+		net->stats.tx_packets++;
+		net->stats.tx_bytes += tcan4x5x->tx_len - 1;
+		can_led_event(net, CAN_LED_EVENT_TX);
+		if (tcan4x5x->tx_len) {
+			can_get_echo_skb(net, 0);
+			tcan4x5x->tx_len = 0;
+		}
+		netif_wake_queue(net);
 	}
 ist_out:
 	regmap_write(tcan4x5x->regmap, TCAN4X5X_INT_FLAGS, TCAN4X5X_CLEAR_ALL_INT);
