@@ -70,7 +70,8 @@
 
 #define TCAN4X5X_MAX_REGISTER	0x8fff
 
-#define TCAN4X5X_BUF_LEN 72
+/* 64 byte buffer + 8 byte MCAN header */
+#define TCAN4X5X_BUF_LEN 	72
 
 struct tcan4x5x_priv {
 	struct can_priv can;

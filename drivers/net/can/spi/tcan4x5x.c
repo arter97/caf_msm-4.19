@@ -178,7 +178,7 @@
 #define TCAN4X5X_MCAN_IR_RF0F		BIT(2)
 #define TCAN4X5X_MCAN_IR_RF0W		BIT(1)
 #define TCAN4X5X_MCAN_IR_RF0N		BIT(0)
-#define TCAN4X5X_ENABLE_MCAN_INT	(TCAN4X5X_MCAN_IR_TEFN | \
+#define TCAN4X5X_ENABLE_MCAN_INT	(TCAN4X5X_MCAN_IR_TC | \
 					TCAN4X5X_MCAN_IR_RF0N | \
 					TCAN4X5X_MCAN_IR_RF1N | \
 					TCAN4X5X_MCAN_IR_RF0F | \
@@ -418,7 +418,7 @@ static void tcan4x5x_hw_tx(struct tcan4x5x_priv *tcan4x5x)
 				  xtd << TCAN4X5X_XTD_SHIFT |
 				  rtr << TCAN4X5X_RTR_SHIFT | sid;
 
-	tcan4x5x->spi_tx_buf[1] = 1 << 22 | fdf << TCAN4X5X_FDF_SHIFT |
+	tcan4x5x->spi_tx_buf[1] = fdf << TCAN4X5X_FDF_SHIFT |
 		 brs << TCAN4X5X_BRS_SHIFT | dlc_len << TCAN4X5X_DLC_SHIFT;
 
 	if (tcan4x5x->tx_skb->len == CAN_MTU)
@@ -428,7 +428,7 @@ static void tcan4x5x_hw_tx(struct tcan4x5x_priv *tcan4x5x)
 		memcpy(tcan4x5x->spi_tx_buf + TCAN4X5X_DATA_PKT_OFF,
 		       fd_frame->data, dlc_len);
 
-	for (i = dlc_len + 1; i < TCAN4X5X_BUF_LEN; i++)
+	for (i = dlc_len + 1; i < TCAN4X5X_BUF_LEN / 4; i++)
 		tcan4x5x->spi_tx_buf[i] = 0;
 
 	regmap_bulk_write(tcan4x5x->regmap, mcan_address, tcan4x5x->spi_tx_buf,
@@ -667,7 +667,7 @@ static irqreturn_t tcan4x5x_can_ist(int irq, void *dev_id)
 		}
 	}
 
-	if (mcan_intf & TCAN4X5X_MCAN_IR_TEFN) {
+	if (mcan_intf & TCAN4X5X_MCAN_IR_TC) {
 		net->stats.tx_packets++;
 		net->stats.tx_bytes += tcan4x5x->tx_len - 1;
 		can_led_event(net, CAN_LED_EVENT_TX);
@@ -677,6 +677,7 @@ static irqreturn_t tcan4x5x_can_ist(int irq, void *dev_id)
 		}
 		netif_wake_queue(net);
 	}
+
 ist_out:
 	regmap_write(tcan4x5x->regmap, TCAN4X5X_INT_FLAGS, TCAN4X5X_CLEAR_ALL_INT);
 	regmap_write(tcan4x5x->regmap, TCAN4X5X_STATUS, TCAN4X5X_CLEAR_ALL_INT);
@@ -796,7 +797,6 @@ static int tcan4x5x_setup(struct spi_device *spi)
 
 	ret = regmap_write(tcan4x5x->regmap, TCAN4X5X_MCAN_TXBC,
 			   (TCAN4X5X_NUM_TX_BUF << TCAN4X5X_TX_QUEUE_SHIFT |
-			   TCAN4X5X_NUM_TX_BUF << TCAN4X5X_TX_NDTB_SHIFT |
 			   TCAN4X5X_TX_BUF_START));
 	if (ret)
 		return -EIO;
@@ -922,6 +922,7 @@ static int tcan4x5x_open(struct net_device *net)
 		ret = -ENOMEM;
 		goto out_free_irq;
 	}
+
 	INIT_WORK(&priv->tx_work, tcan4x5x_tx_work_handler);
 	INIT_WORK(&priv->restart_work, tcan4x5x_restart_work_handler);
 
@@ -931,6 +932,7 @@ static int tcan4x5x_open(struct net_device *net)
 		ret = -ENOMEM;
 		goto  out_free_wq;
 	}
+
 	priv->spi_rx_buf = devm_kzalloc(&spi->dev, TCAN4X5X_BUF_LEN,
 					GFP_KERNEL);
 	if (!priv->spi_rx_buf) {
