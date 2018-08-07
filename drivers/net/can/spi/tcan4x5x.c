@@ -32,6 +32,7 @@
 #define TCAN4X5X_EXT_CLK_DEF	40000000
 
 #define TCAN4X5X_CLEAR_ALL_INT	0xffffffff
+#define TCAN4X5X_SET_ALL_INT	0xffffffff
 
 #define TCAN4X5X_TX_ECHO_SKB_MAX 1
 #define TCAN4X5X_DATA_PKT_OFF	2
@@ -814,6 +815,12 @@ static int tcan4x5x_setup(struct spi_device *spi)
 			   TCAN4X5X_64_BYTE));
 	if (ret)
 		return -EIO;
+
+	ret = regmap_write(tcan4x5x->regmap, TCAN4X5X_MCAN_TXBTIE,
+			   TCAN4X5X_SET_ALL_INT);
+	if (ret)
+		return -EIO;
+
 
 	ret = regmap_update_bits(tcan4x5x->regmap, TCAN4X5X_CONFIG,
 				 TCAN4X5X_MODE_SEL_MASK, TCAN4X5X_MODE_NORMAL);
