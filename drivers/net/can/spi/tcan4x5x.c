@@ -108,13 +108,12 @@
 #define TCAN4X5X_RX_FIFO0_MESSAGE	BIT(0)
 #define TCAN4X5X_RX_FIFO1_MESSAGE	BIT(4)
 #define TCAN4X5X_RX_BUFFER_MESSAGE	BIT(19)
-#define TCAN4X5X_RX_INDEX_MASK		0x3f0
+#define TCAN4X5X_RX_INDEX_MASK		0x3f00
 #define TCAN4X5X_RX_INDEX_SHIFT		8
 
 #define TCAN4X5X_RX_ADDR_OFFSET		0x8000
 #define TCAN4X5X_RX_BUF_ADDR_OFFSET	0x8100
-#define TCAN4X5X_RX_ADDR_MASK		0xfffc
-#define TCAN4X5X_RX_ADDR_SHIFT		2
+#define TCAN4X5X_RX_ADDR_MASK		0xffff
 
 #define TCAN4X5X_ERR_PROTOCOL_MASK	0x7
 #define TCAN4X5X_ERR_STUFERR		0x1
@@ -205,7 +204,7 @@
 #define TCAN4X5X_EINT1			BIT(1)
 
 struct tcan4x5x_rx_regs {
-	u32 fifo_start_reg;
+	u32 fifo_status_reg;
 	u32 fifo_config_reg;
 	u32 fifo_ack_reg;
 	u32 rx_buf_shift;
@@ -458,28 +457,21 @@ int tcan4x5x_hw_rx(struct tcan4x5x_priv *tcan4x5x)
 	regmap_read(tcan4x5x->regmap, TCAN4X5X_MCAN_INT_FLAG, &msg_type);
 	if (msg_type & TCAN4X5X_RX_FIFO0_MESSAGE) {
 		buffer_regs = &tcan4x5x_fifo_regs[0];
-		regmap_update_bits(tcan4x5x->regmap, TCAN4X5X_MCAN_INT_FLAG,
-				   TCAN4X5X_RX_FIFO0_MESSAGE,
-				   TCAN4X5X_RX_FIFO0_MESSAGE);
 	} else if (msg_type & TCAN4X5X_RX_FIFO1_MESSAGE) {
 		buffer_regs = &tcan4x5x_fifo_regs[1];
-		regmap_update_bits(tcan4x5x->regmap, TCAN4X5X_MCAN_INT_FLAG,
-				   TCAN4X5X_RX_FIFO1_MESSAGE,
-				   TCAN4X5X_RX_FIFO1_MESSAGE);
 	} else if (msg_type & TCAN4X5X_RX_BUFFER_MESSAGE) {
 		buffer_regs = &tcan4x5x_fifo_regs[2];
-		regmap_update_bits(tcan4x5x->regmap, TCAN4X5X_MCAN_INT_FLAG,
-				   TCAN4X5X_RX_BUFFER_MESSAGE,
-				   TCAN4X5X_RX_BUFFER_MESSAGE);
 	} else {
 		buffer_regs = NULL;
 		return -EINVAL;
 	}
 
-	regmap_read(tcan4x5x->regmap, TCAN4X5X_MCAN_RXESC, &rx_buf_size);
-	rx_buf_size = tcan4x5x_txrxesc_value(rx_buf_size >> buffer_regs->rx_buf_shift);
+	/*regmap_read(tcan4x5x->regmap, TCAN4X5X_MCAN_RXESC, &rx_buf_size);
+	rx_buf_size = tcan4x5x_txrxesc_value(rx_buf_size >> buffer_regs->rx_buf_shift);*/
+	rx_buf_size = TCAN4X5X_BUF_LEN;
+
 	/* Determine which FIFO needs service */
-	regmap_read(tcan4x5x->regmap, buffer_regs->fifo_start_reg, &fifo_idx);
+	regmap_read(tcan4x5x->regmap, buffer_regs->fifo_status_reg, &fifo_idx);
 	if (msg_type & TCAN4X5X_RX_BUFFER_MESSAGE)
 		queue_idx = fifo_idx - 1;
 	else
@@ -503,6 +495,12 @@ int tcan4x5x_hw_rx(struct tcan4x5x_priv *tcan4x5x)
 	else
 		data_len = tcan4x5x_txrxesc_value(dlc_len);
 
+	regmap_bulk_read(tcan4x5x->regmap, fifo_start_addr + 8,
+			 data_buffer, data_len / 4);
+
+	/* Acknowledge receipt of the data */
+	regmap_write(tcan4x5x->regmap, buffer_regs->fifo_ack_reg, queue_idx);
+
 	if (rx_header[0] &  TCAN4X5X_XTD_MASK) {
 		fd_frame->can_id = CAN_EFF_FLAG;
 		fd_frame->can_id |= (rx_header[0] & CAN_EFF_MASK);
@@ -520,15 +518,8 @@ int tcan4x5x_hw_rx(struct tcan4x5x_priv *tcan4x5x)
 		netdev_dbg(tcan4x5x->net, "ESI Error\n");
 	}
 
-	regmap_bulk_read(tcan4x5x->regmap, fifo_start_addr + 8,
-			 data_buffer, data_len / 4);
-
 	fd_frame->len = data_len;
 	memcpy(fd_frame->data, data_buffer, fd_frame->len);
-
-	/* Acknowledge receipt of the data */
-	regmap_update_bits(tcan4x5x->regmap, buffer_regs->fifo_ack_reg,
-			   queue_idx, queue_idx);
 
 	tcan4x5x->net->stats.rx_packets++;
 	tcan4x5x->net->stats.rx_bytes += fd_frame->len;
