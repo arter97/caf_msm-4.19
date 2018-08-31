@@ -974,6 +974,7 @@ enum cfg80211_ap_settings_flags {
  * @beacon_rate: bitrate to be used for beacons
  * @ht_cap: HT capabilities (or %NULL if HT isn't enabled)
  * @vht_cap: VHT capabilities (or %NULL if VHT isn't enabled)
+ * @he_cap: HE capabilities (or %NULL if HE isn't enabled)
  * @ht_required: stations must support HT
  * @vht_required: stations must support VHT
  * @flags: flags, as defined in enum cfg80211_ap_settings_flags
@@ -1000,6 +1001,7 @@ struct cfg80211_ap_settings {
 
 	const struct ieee80211_ht_cap *ht_cap;
 	const struct ieee80211_vht_cap *vht_cap;
+	const struct ieee80211_he_cap_elem *he_cap;
 	bool ht_required, vht_required;
 	u32 flags;
 };
