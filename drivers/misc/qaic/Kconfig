@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: GPL-2.0-only
+#
+# QTI Cloud AI accelerators driver
+#
+
+config QAIC
+	tristate "QTI Cloud AI accelerators"
+	depends on PCI && HAS_IOMEM
+	help
+	  Enables driver for QTI's Cloud AI accelerator PCIe cards that are
+	  designed to accelerate Deep Learning inference workloads.
+
+	  The driver manages the PCIe devices and provides an IOCTL interface
+	  for users to submit workloads to the devices.
+
+	  If unsure, say N.
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called qaic.
