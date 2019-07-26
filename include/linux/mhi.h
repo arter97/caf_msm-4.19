@@ -80,23 +80,24 @@ enum mhi_device_type {
 };
 
 /**
- * enum mhi_ee - device current execution enviornment
- * @MHI_EE_PBL - device in PBL
- * @MHI_EE_SBL - device in SBL
- * @MHI_EE_AMSS - device in mission mode (firmware fully loaded)
- * @MHI_EE_RDDM - device in ram dump collection mode
- * @MHI_EE_WFW - device in WLAN firmware mode
- * @MHI_EE_PTHRU - device in PBL but configured in pass thru mode
- * @MHI_EE_EDL - device in emergency download mode
+ * enum mhi_ee - Execution environment types
+ * @MHI_EE_PBL: Primary Bootloader
+ * @MHI_EE_SBL: Secondary Bootloader
+ * @MHI_EE_AMSS: Modem, aka the primary runtime EE
+ * @MHI_EE_BHIE: BHI extension
+ * @MHI_EE_RDDM: Ram dump download mode
+ * @MHI_EE_WFW - device in WLAN firmware mod
+ * @MHI_EE_PTHRU: Passthrough
+ * @MHI_EE_EDL: Embedded downloader
  */
 enum mhi_ee {
-	MHI_EE_PBL,
-	MHI_EE_SBL,
-	MHI_EE_AMSS,
-	MHI_EE_RDDM,
-	MHI_EE_WFW,
-	MHI_EE_PTHRU,
-	MHI_EE_EDL,
+	MHI_EE_PBL = 0x0,
+	MHI_EE_SBL = 0x1,
+	MHI_EE_AMSS = 0x2,
+	MHI_EE_RDDM = 0x3,
+	MHI_EE_WFW = 0x4,
+	MHI_EE_PTHRU = 0x5,
+	MHI_EE_EDL = 0x6,
 	MHI_EE_MAX_SUPPORTED = MHI_EE_EDL,
 	MHI_EE_DISABLE_TRANSITION, /* local EE, not related to mhi spec */
 	MHI_EE_NOT_SUPPORTED,
@@ -133,6 +134,49 @@ struct mhi_link_info {
 	unsigned int target_link_width;
 	int sequence_num;
 };
+
+/**
+ * enum MHI_XFER_TYPE - Accepted buffer type for the channel
+ * @MHI_XFER_BUFFER: Raw buffer
+ * @MHI_XFER_SKB: SKB struct
+ * @MHI_XFER_SCLIST: Scatter-gather list
+ * @MHI_XFER_NOP: CPU offload channel, host does not accept transfer
+ * @MHI_XFER_DMA: receive dma address, already mapped by client
+ * @MHI_XFER_RSC_DMA: RSC type, accept premapped buffer
+ */
+enum MHI_XFER_TYPE {
+	MHI_XFER_BUFFER,
+	MHI_XFER_SKB,
+	MHI_XFER_SCLIST,
+	MHI_XFER_NOP,
+	MHI_XFER_DMA, /* receive dma address, already mapped by client */
+	MHI_XFER_RSC_DMA, /* RSC type, accept premapped buffer */
+};
+
+/**
+ * enum mhi_er_data_type - Event ring data types
+ * @MHI_ER_DATA_ELEMENT_TYPE: Only client data over this ring
+ * @MHI_ER_CTRL_ELEMENT_TYPE: MHI control data and client data
+ * @MHI_ER_TSYNC_ELEMENT_TYPE: Time sync events
+ */
+enum mhi_er_data_type {
+	MHI_ER_DATA_ELEMENT_TYPE,
+	MHI_ER_CTRL_ELEMENT_TYPE,
+	MHI_ER_TSYNC_ELEMENT_TYPE,
+	MHI_ER_BW_SCALE_ELEMENT_TYPE,
+	MHI_ER_DATA_TYPE_MAX = MHI_ER_BW_SCALE_ELEMENT_TYPE,
+};
+
+/**
+ * enum MHI_BRSTMODE - Doorbell mode
+ * @MHI_BRSTMODE_DISABLE: Burst mode disable
+ * @MHI_BRSTMODE_ENABLE: Burst mode enable
+ */
+enum MHI_BRSTMODE {
+	MHI_BRSTMODE_DISABLE = 0x2,
+	MHI_BRSTMODE_ENABLE = 0x3,
+};
+
 
 /**
  * struct image_info - firmware and rddm table table
@@ -202,6 +246,105 @@ struct reg_write_info {
 	void __iomem *reg_addr;
 	u32 val;
 	bool valid;
+};
+
+/**
+ * struct mhi_channel_config - Channel configuration structure from controller
+ * @num: The number assigned to this channel
+ * @name: The name of this channel
+ * @num_elements: The number of elements that can be queued to this channel
+ * @local_elements: Used if number of local ring is bigger than
+	     transformed ring
+ * @event_ring: The event rung index that services this channel
+ * @dir: Direction that data may flow on this channel
+ * @type: Used if not identical as direction
+ * @ee: Under which execution environment is this channel valid
+ * @pollcfg: Polling configuration for burst mode.  0 is default.  milliseconds
+	     for UL channels, multiple of 8 ring elements for DL channels
+ * @data_type: Data type accepted by this channel
+ * @doorbell: Doorbell mode
+ * @lpm_notify: The channel master requires low power mode notifications
+ * @offload_channel: The client manages the channel completely
+ * @doorbell_mode_switch: Channel switches to doorbell mode on M0 transition
+ * @auto_queue: Framework will automatically queue buffers for DL traffic
+ * @auto_start: Automatically start (open) this channel
+ * @wake_capable: If channel is wake_capable
+ */
+struct mhi_channel_config {
+	u32 num;
+	char *name;
+	u32 num_elements;
+	u32 local_elements;
+	u32 event_ring;
+	enum dma_data_direction dir;
+	enum dma_data_direction type;
+	enum mhi_ee ee;
+	u32 pollcfg;
+	enum MHI_XFER_TYPE data_type;
+	enum MHI_BRSTMODE doorbell;
+	bool lpm_notify;
+	bool offload_channel;
+	bool doorbell_mode_switch;
+	bool auto_queue;
+	bool auto_start;
+	bool wake_capable;
+};
+
+/**
+ * struct mhi_event_config - Event ring configuration structure from controller
+ * @num_elements: The number of elements that can be queued to this ring
+ * @irq_moderation_ms: ms to delay irq for additional events to be aggregated
+ * @msi: MSI associated with this ring
+ * @channel: Dedicated channel number, U32_MAX indicates non-dedicated ring
+ * @mode: Doorbell mode
+ * @data_type: Type of data this ring will process
+ * @hardware_event: This ring is associated with hardware channels
+ * @client_managed: This ring is client managed
+ * @offload_channel: This ring is associated with an offloaded channel
+ * @priority: Priority of this ring.  Use 1 for now
+ */
+struct mhi_event_config {
+	u32 num_elements;
+	u32 irq_moderation_ms;
+	u32 msi;
+	u32 channel;
+	enum MHI_BRSTMODE mode;
+	enum mhi_er_data_type data_type;
+	bool hardware_event;
+	bool client_managed;
+	bool offload_channel;
+	u32 priority;
+	bool force_uncached;
+};
+
+/**
+ * struct mhi_controller_config - Root MHI controller configuration
+ * @max_channels: Maximum number of channels supported
+ * @timeout_ms: timeout value for operations.  0 means use default
+ * @use_bounce_buf: Use a bounce buffer pool due to limited DDR access
+ * @buf_len: Size of automatically allocated buffers.  0 means use default
+ * @num_channels: Number of channels defined in @ch_cfg
+ * @ch_cfg: Array of defined channels
+ * @num_events: Number of event rings defined in @event_cfg
+ * @event_cfg: Array of defined event rings
+ * @m2_no_db_access: If db_access not allowed in m2
+ * @ee_table: ee conversion from dev to host
+ * @bhie_offset: bhie offset
+ * @name: Name of MHI controller
+ */
+struct mhi_controller_config {
+	u32 max_channels;
+	u32 timeout_ms;
+	bool use_bounce_buf;
+	u32 buf_len;
+	u32 num_channels;
+	struct mhi_channel_config *ch_cfg;
+	u32 num_events;
+	struct mhi_event_config *event_cfg;
+	bool m2_no_db_access;
+	u32 *ee_table;
+	u32 bhie_offset;
+	const char *name;
 };
 
 /**
@@ -719,6 +862,15 @@ struct mhi_controller *mhi_alloc_controller(size_t size);
  * @mhi_cntrl: MHI controller to register
  */
 int of_register_mhi_controller(struct mhi_controller *mhi_cntrl);
+
+/**
+ * register_mhi_controller - Register MHI controller
+ * Registers MHI controller with MHI bus framework.
+ * @mhi_cntrl: MHI controller to register
+ * @config: Configuration to use for the controller
+ */
+int register_mhi_controller(struct mhi_controller *mhi_cntrl,
+			    struct mhi_controller_config *config);
 
 void mhi_unregister_mhi_controller(struct mhi_controller *mhi_cntrl);
 
