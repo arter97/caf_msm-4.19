@@ -1153,6 +1153,8 @@ int mhi_sync_power_up(struct mhi_controller *mhi_cntrl)
 		mhi_cntrl->timeout_ms);
 	mhi_cntrl->status_cb(mhi_cntrl, mhi_cntrl->priv_data,
 			     MHI_CB_BOOTUP_TIMEOUT);
+	mhi_power_down(mhi_cntrl, false);
+
 	return -ETIMEDOUT;
 }
 EXPORT_SYMBOL(mhi_sync_power_up);
