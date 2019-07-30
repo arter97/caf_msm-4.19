@@ -6,6 +6,7 @@
 config QAIC
 	tristate "QTI Cloud AI accelerators"
 	depends on PCI && HAS_IOMEM
+	depends on MHI_BUS
 	help
 	  Enables driver for QTI's Cloud AI accelerator PCIe cards that are
 	  designed to accelerate Deep Learning inference workloads.
