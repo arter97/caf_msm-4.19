@@ -346,7 +346,7 @@ static struct mhi_event_config aic100_events[] = {
 
 static struct mhi_controller_config aic100_config = {
 	.max_channels = 128,
-	.timeout_ms = 0,
+	.timeout_ms = 20000, /* 20 sec for emulation slowness */
 	.use_bounce_buf = false,
 	.buf_len = 0,
 	.num_channels = ARRAY_SIZE(aic100_channels),
