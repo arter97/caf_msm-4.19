@@ -568,6 +568,84 @@ DEFINE_DEBUGFS_ATTRIBUTE(debugfs_trigger_reset_fops, NULL,
 DEFINE_DEBUGFS_ATTRIBUTE(debugfs_trigger_soc_reset_fops, NULL,
 			 mhi_debugfs_trigger_soc_reset, "%llu\n");
 
+static int bhi_show(struct seq_file *s, void *offset)
+{
+	struct mhi_controller *mhi_cntrl = s->private;
+	u32 val;
+	int ret;
+
+	ret = mhi_read_reg(mhi_cntrl, mhi_cntrl->regs, BHIOFF, &val);
+        if (ret)
+		return 0;
+	seq_printf(s, "BHIOFF 0x%x\n", val);
+
+	ret = mhi_read_reg(mhi_cntrl, mhi_cntrl->bhi, BHI_BHIVERSION_MINOR, &val);
+        if (ret)
+		return 0;
+	seq_printf(s, "BHIVERSION_MINOR 0x%x\n", val);
+
+	ret = mhi_read_reg(mhi_cntrl, mhi_cntrl->bhi, BHI_BHIVERSION_MAJOR, &val);
+        if (ret)
+		return 0;
+	seq_printf(s, "BHIVERSION_MAJOR 0x%x\n", val);
+
+	ret = mhi_read_reg(mhi_cntrl, mhi_cntrl->bhi, BHI_IMGADDR_LOW, &val);
+        if (ret)
+		return 0;
+	seq_printf(s, "IMGADDR_LOW 0x%x\n", val);
+
+	ret = mhi_read_reg(mhi_cntrl, mhi_cntrl->bhi, BHI_IMGADDR_HIGH, &val);
+        if (ret)
+		return 0;
+	seq_printf(s, "IMGADDR_HIGH 0x%x\n", val);
+
+	ret = mhi_read_reg(mhi_cntrl, mhi_cntrl->bhi, BHI_IMGSIZE, &val);
+        if (ret)
+		return 0;
+	seq_printf(s, "IMGSIZE 0x%x\n", val);
+
+	ret = mhi_read_reg(mhi_cntrl, mhi_cntrl->bhi, BHI_IMGTXDB, &val);
+        if (ret)
+		return 0;
+	seq_printf(s, "IMGTXDB 0x%x\n", val);
+
+	ret = mhi_read_reg(mhi_cntrl, mhi_cntrl->bhi, BHI_INTVEC, &val);
+        if (ret)
+		return 0;
+	seq_printf(s, "INTVEC 0x%x\n", val);
+
+	ret = mhi_read_reg(mhi_cntrl, mhi_cntrl->bhi, BHI_EXECENV, &val);
+        if (ret)
+		return 0;
+	seq_printf(s, "EXECENV 0x%x\n", val);
+
+	ret = mhi_read_reg(mhi_cntrl, mhi_cntrl->bhi, BHI_STATUS, &val);
+        if (ret)
+		return 0;
+	seq_printf(s, "STATUS 0x%x\n", val);
+
+	return 0;
+}
+
+static int bhi_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, bhi_show, inode->i_private);
+}
+
+static const struct file_operations bhi_fops = {
+	.owner = THIS_MODULE,
+	.open = bhi_open,
+	.read = seq_read,
+	.llseek = seq_lseek,
+	.release = single_release,
+};
+
+void mhi_init_debugfs_bhi(struct mhi_controller *mhi_cntrl)
+{
+	debugfs_create_file("dump_bhi", S_IFREG | S_IRUGO, mhi_cntrl->dentry,
+			    mhi_cntrl, &bhi_fops);
+}
+
 void mhi_init_debugfs(struct mhi_controller *mhi_cntrl)
 {
 	struct dentry *dentry;
@@ -600,6 +678,8 @@ void mhi_init_debugfs(struct mhi_controller *mhi_cntrl)
 				   &debugfs_trigger_soc_reset_fops);
 
 	mhi_cntrl->dentry = dentry;
+
+	mhi_init_debugfs_bhi(mhi_cntrl);
 }
 
 void mhi_deinit_debugfs(struct mhi_controller *mhi_cntrl)
