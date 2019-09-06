@@ -746,7 +746,16 @@ static int mhi_uci_init(void)
 	return ret;
 }
 
+static void __exit mhi_uci_exit(void)
+{
+	mhi_driver_unregister(&mhi_uci_driver);
+	class_destroy(mhi_uci_drv.class);
+	unregister_chrdev(mhi_uci_drv.major, MHI_UCI_DRIVER_NAME);
+}
+
 module_init(mhi_uci_init);
+module_exit(mhi_uci_exit);
+
 MODULE_LICENSE("GPL v2");
 MODULE_ALIAS("pci:v000017CBd0000A100sv*sd*bc*sc*i*");
 MODULE_DESCRIPTION("MHI UCI Driver");
