@@ -22,6 +22,7 @@ const char * const mhi_log_level_str[MHI_MSG_LVL_MAX] = {
 	[MHI_MSG_LVL_CRITICAL] = "Critical",
 	[MHI_MSG_LVL_MASK_ALL] = "Mask all",
 };
+static struct dentry *root_dentry;
 
 const char * const mhi_ee_str[MHI_EE_MAX] = {
 	[MHI_EE_PBL] = "PBL",
@@ -1935,7 +1936,7 @@ int register_mhi_controller(struct mhi_controller *mhi_cntrl,
 		mhi_cntrl->mhi_sfr = sfr_info;
 	}
 
-	mhi_cntrl->parent = debugfs_lookup(mhi_bus_type.name, NULL);
+	mhi_cntrl->parent = root_dentry;
 	mhi_cntrl->klog_lvl = MHI_MSG_LVL_ERROR;
 
 	/* adding it to this list only for debug purpose */
@@ -2364,7 +2365,7 @@ static int __init mhi_init(void)
 	INIT_LIST_HEAD(&mhi_bus.controller_list);
 
 	/* parent directory */
-	debugfs_create_dir(mhi_bus_type.name, NULL);
+	root_dentry = debugfs_create_dir(mhi_bus_type.name, NULL);
 
 	ret = bus_register(&mhi_bus_type);
 
@@ -2372,7 +2373,16 @@ static int __init mhi_init(void)
 		mhi_dtr_init();
 	return ret;
 }
+
+static void __exit mhi_exit(void)
+{
+	mhi_dtr_exit();
+	bus_unregister(&mhi_bus_type);
+	debugfs_remove_recursive(root_dentry);
+}
+
 postcore_initcall(mhi_init);
+module_exit(mhi_exit);
 
 MODULE_LICENSE("GPL v2");
 MODULE_ALIAS("MHI_CORE");
