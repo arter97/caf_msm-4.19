@@ -744,5 +744,5 @@ static int mhi_uci_init(void)
 
 module_init(mhi_uci_init);
 MODULE_LICENSE("GPL v2");
-MODULE_ALIAS("MHI_UCI");
+MODULE_ALIAS("pci:v000017CBd0000A100sv*sd*bc*sc*i*");
 MODULE_DESCRIPTION("MHI UCI Driver");
