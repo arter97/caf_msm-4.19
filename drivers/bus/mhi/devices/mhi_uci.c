@@ -729,15 +729,19 @@ static int mhi_uci_init(void)
 
 	mhi_uci_drv.major = ret;
 	mhi_uci_drv.class = class_create(THIS_MODULE, MHI_UCI_DRIVER_NAME);
-	if (IS_ERR(mhi_uci_drv.class))
+	if (IS_ERR(mhi_uci_drv.class)) {
+		unregister_chrdev(mhi_uci_drv.major, MHI_UCI_DRIVER_NAME);
 		return -ENODEV;
+	}
 
 	mutex_init(&mhi_uci_drv.lock);
 	INIT_LIST_HEAD(&mhi_uci_drv.head);
 
 	ret = mhi_driver_register(&mhi_uci_driver);
-	if (ret)
+	if (ret) {
 		class_destroy(mhi_uci_drv.class);
+		unregister_chrdev(mhi_uci_drv.major, MHI_UCI_DRIVER_NAME);
+	}
 
 	return ret;
 }
