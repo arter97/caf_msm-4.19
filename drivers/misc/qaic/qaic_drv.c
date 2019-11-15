@@ -49,7 +49,7 @@ static int qaic_pci_probe(struct pci_dev *pdev,
 	if (ret)
 		goto enable_fail;
 
-	ret = pci_request_selected_regions(pdev, qdev->bars, "aci100");
+	ret = pci_request_selected_regions(pdev, qdev->bars, "aic100");
 	if (ret)
 		goto request_regions_fail;
 
