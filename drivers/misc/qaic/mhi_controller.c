@@ -5,7 +5,11 @@
 #include <linux/err.h>
 #include <linux/memblock.h>
 #include <linux/mhi.h>
+#include <linux/moduleparam.h>
 #include <linux/pci.h>
+
+static unsigned int mhi_timeout = 20000; /* 20 sec default */
+module_param(mhi_timeout, uint, 0600);
 
 static struct mhi_channel_config aic100_channels[] = {
         {
@@ -346,7 +350,7 @@ static struct mhi_event_config aic100_events[] = {
 
 static struct mhi_controller_config aic100_config = {
 	.max_channels = 128,
-	.timeout_ms = 20000, /* 20 sec for emulation slowness */
+	.timeout_ms = 0, /* controlled by mhi_timeout */
 	.use_bounce_buf = false,
 	.buf_len = 0,
 	.num_channels = ARRAY_SIZE(aic100_channels),
@@ -419,6 +423,8 @@ struct mhi_controller *qaic_mhi_register_controller(struct pci_dev *pci_dev,
 
 	mhi_cntl->fw_image = "qcom/aic100_sbl.bin";
 
+	/* use latest configured timeout */
+	aic100_config.timeout_ms = mhi_timeout;
 	ret = register_mhi_controller(mhi_cntl, &aic100_config);
 	if (ret) {
 		pci_err(pci_dev, "register_mhi_controller failed %d\n", ret);
