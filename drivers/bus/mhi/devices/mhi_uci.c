@@ -601,10 +601,10 @@ static int mhi_uci_probe(struct mhi_device *mhi_dev,
 	uci_dev->devt = MKDEV(mhi_uci_drv.major, minor);
 	uci_dev->dev = device_create(mhi_uci_drv.class, &mhi_dev->dev,
 				     uci_dev->devt, uci_dev,
-				     DEVICE_NAME "_%04x_%02u.%02u.%02u%s%d",
+				     DEVICE_NAME "_%04x_%02u.%02u.%02u%s%s",
 				     mhi_dev->dev_id, mhi_dev->domain,
-				     mhi_dev->bus, mhi_dev->slot, "_pipe_",
-				     mhi_dev->ul_chan_id);
+				     mhi_dev->bus, mhi_dev->slot, "_",
+				     mhi_dev->chan_name);
 	set_bit(minor, uci_minors);
 
 	/* create debugging buffer */
