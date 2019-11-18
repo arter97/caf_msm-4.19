@@ -2,8 +2,13 @@
 
 /* Copyright (c) 2019, The Linux Foundation. All rights reserved. */
 
+#include <linux/cdev.h>
 #include <linux/delay.h>
+#include <linux/idr.h>
+#include <linux/list.h>
+#include <linux/mhi.h>
 #include <linux/module.h>
+#include <linux/mutex.h>
 #include <linux/pci.h>
 
 #include "mhi_controller.h"
@@ -12,12 +17,163 @@
 
 #define PCI_DEV_AIC100			0xa100
 
+#define QAIC_NAME			"QTI Cloud AI"
+#define QAIC_MAX_MINORS			256
+
+static int qaic_major;
+static struct class *qaic_class;
+static DEFINE_IDR(qaic_devs);
+static DEFINE_MUTEX(qaic_devs_lock);
+
+static int qaic_device_open(struct inode *inode, struct file *filp);
+static int qaic_device_release(struct inode *inode, struct file *filp);
+
 struct qaic_device {
 	struct pci_dev		*pdev;
 	int 			bars;
 	void __iomem		*bar_0;
 	struct mhi_controller 	*mhi_cntl;
+	struct mhi_device	*cntl_ch;
+	struct cdev		cdev;
+	struct device		*dev;
 };
+
+static const struct file_operations qaic_ops = {
+	.owner = THIS_MODULE,
+	.open = qaic_device_open,
+	.release = qaic_device_release,
+};
+
+static int qaic_device_open(struct inode *inode, struct file *filp)
+{
+	struct qaic_device *qdev;
+	int ret;
+
+	ret = mutex_lock_interruptible(&qaic_devs_lock);
+	if (ret)
+		return ret;
+	qdev = idr_find(&qaic_devs, iminor(inode));
+	mutex_unlock(&qaic_devs_lock);
+
+	pci_dbg(qdev->pdev, "%s pid:%d\n", __func__, current->pid);
+
+	filp->private_data = qdev;
+
+	nonseekable_open(inode, filp);
+
+	return 0;
+}
+
+static int qaic_device_release(struct inode *inode, struct file *filp)
+{
+	struct qaic_device *qdev = filp->private_data;
+
+	pci_dbg(qdev->pdev, "%s pid:%d\n", __func__, current->pid);
+
+	filp->private_data = NULL;
+	return 0;
+}
+
+static int qaic_mhi_probe(struct mhi_device *mhi_dev,
+			  const struct mhi_device_id *id)
+{
+	struct qaic_device *qdev;
+	dev_t devno;
+	int ret;
+
+	/*
+	 * Invoking this function indicates that the control channel to the
+	 * device is available.  We use that as a signal to indicate that
+	 * the device side firmware has booted.  The device side firmware
+	 * manages the device resources, so we need to communicate with it
+	 * via the control channel in order to utilize the device.  Therefore
+	 * we wait until this signal to create the char dev that userspace will
+	 * use to control the device, because without the device side firmware,
+	 * userspace can't do anything useful.
+	 */
+
+	qdev = (struct qaic_device *)pci_get_drvdata(
+					to_pci_dev(mhi_dev->mhi_cntrl->dev));
+
+	pci_dbg(qdev->pdev, "%s\n", __func__);
+
+	mhi_device_set_devdata(mhi_dev, qdev);
+	qdev->cntl_ch = mhi_dev;
+
+	mutex_lock(&qaic_devs_lock);
+	ret = idr_alloc(&qaic_devs, qdev, 0, QAIC_MAX_MINORS, GFP_KERNEL);
+	mutex_unlock(&qaic_devs_lock);
+
+	if (ret < 0) {
+		pci_dbg(qdev->pdev, "%s: idr_alloc failed %d\n", __func__, ret);
+		goto err;
+	}
+
+	devno = MKDEV(qaic_major, ret);
+
+	cdev_init(&qdev->cdev, &qaic_ops);
+	qdev->cdev.owner = THIS_MODULE;
+	ret = cdev_add(&qdev->cdev, devno, 1);
+	if (ret) {
+		pci_dbg(qdev->pdev, "%s: cdev_add failed %d\n", __func__, ret);
+		goto free_idr;
+	}
+
+	qdev->dev = device_create(qaic_class, NULL, devno, NULL,
+				  "qaic_aic100_%04x:%02x:%02x.%d",
+				  pci_domain_nr(qdev->pdev->bus),
+				  qdev->pdev->bus->number,
+				  PCI_SLOT(qdev->pdev->devfn),
+				  PCI_FUNC(qdev->pdev->devfn));
+	if (IS_ERR(qdev->dev)) {
+		ret = PTR_ERR(qdev->dev);
+		pci_dbg(qdev->pdev, "%s: device_create failed %d\n", __func__, ret);
+		goto free_cdev;
+	}
+
+	dev_set_drvdata(qdev->dev, qdev);
+
+	return 0;
+
+free_cdev:
+	cdev_del(&qdev->cdev);
+free_idr:
+	mutex_lock(&qaic_devs_lock);
+	idr_remove(&qaic_devs, MINOR(devno));
+	mutex_unlock(&qaic_devs_lock);
+err:
+	return ret;
+}
+
+static void qaic_mhi_remove(struct mhi_device *mhi_dev)
+{
+	struct qaic_device *qdev;
+	dev_t devno;
+
+	/* invoked when a MHI error is detected, or MHI power down */
+
+	qdev = mhi_device_get_devdata(mhi_dev);
+
+	pci_dbg(qdev->pdev, "%s\n", __func__);
+
+	devno = qdev->dev->devt;
+	qdev->dev = NULL;
+	device_destroy(qaic_class, devno);
+	cdev_del(&qdev->cdev);
+	mutex_lock(&qaic_devs_lock);
+	idr_remove(&qaic_devs, MINOR(devno));
+	mutex_unlock(&qaic_devs_lock);
+}
+
+static void qaic_mhi_ul_xfer_cb(struct mhi_device *mhi_dev,
+				struct mhi_result *mhi_result)
+{
+}
+
+static void qaic_mhi_dl_xfer_cb(struct mhi_device *mhi_dev,
+				struct mhi_result *mhi_result)
+{
+}
 
 static int qaic_pci_probe(struct pci_dev *pdev,
 			  const struct pci_device_id *id)
@@ -35,6 +191,7 @@ static int qaic_pci_probe(struct pci_dev *pdev,
 	}
 
 	pci_set_drvdata(pdev, qdev);
+	qdev->pdev = pdev;
 
 	qdev->bars = pci_select_bars(pdev, IORESOURCE_MEM);
 
@@ -113,6 +270,7 @@ static void qaic_pci_remove(struct pci_dev *pdev)
 {
 	struct qaic_device *qdev = pci_get_drvdata(pdev);
 
+	pci_dbg(pdev, "%s\n", __func__);
 	if (!qdev)
 		return;
 
@@ -126,6 +284,23 @@ static void qaic_pci_remove(struct pci_dev *pdev)
 	kfree(qdev);
 }
 
+static const struct mhi_device_id qaic_mhi_match_table[] = {
+        { .chan = "QAIC_CONTROL", },
+        {},
+};
+
+static struct mhi_driver qaic_mhi_driver = {
+	.id_table = qaic_mhi_match_table,
+	.remove = qaic_mhi_remove,
+	.probe = qaic_mhi_probe,
+	.ul_xfer_cb = qaic_mhi_ul_xfer_cb,
+	.dl_xfer_cb = qaic_mhi_dl_xfer_cb,
+	.driver = {
+		.name = "qaic_mhi",
+		.owner = THIS_MODULE,
+	},
+};
+
 static const struct pci_device_id ids[] = {
 	{ PCI_DEVICE(PCI_VENDOR_ID_QTI, PCI_DEV_AIC100), },
 	{ 0, }
@@ -133,7 +308,7 @@ static const struct pci_device_id ids[] = {
 MODULE_DEVICE_TABLE(pci, ids);
 
 static struct pci_driver qaic_pci_driver = {
-	.name = "QTI Cloud AI",
+	.name = QAIC_NAME,
 	.id_table = ids,
 	.probe = qaic_pci_probe,
 	.remove = qaic_pci_remove,
@@ -141,12 +316,59 @@ static struct pci_driver qaic_pci_driver = {
 
 static int __init qaic_init(void)
 {
-	return pci_register_driver(&qaic_pci_driver);
+	int ret;
+	dev_t dev;
+
+	pr_debug("qaic: init\n");
+	ret = alloc_chrdev_region(&dev, 0, QAIC_MAX_MINORS, QAIC_NAME);
+	if (ret < 0) {
+		pr_debug("qaic: alloc_chrdev_region failed %d\n", ret);
+		goto out;
+	}
+
+	qaic_major = MAJOR(dev);
+
+	qaic_class = class_create(THIS_MODULE, QAIC_NAME);
+	if (IS_ERR(qaic_class)) {
+		ret = PTR_ERR(qaic_class);
+		pr_debug("qaic: class_create failed %d\n", ret);
+		goto free_major;
+	}
+
+	ret = mhi_driver_register(&qaic_mhi_driver);
+	if (ret) {
+		pr_debug("qaic: mhi_driver_register failed %d\n", ret);
+		goto free_class;
+	}
+
+	ret = pci_register_driver(&qaic_pci_driver);
+
+	if (ret) {
+		pr_debug("qaic: pci_register_driver failed %d\n", ret);
+		goto free_mhi;
+	}
+
+	pr_debug("qaic: init success\n");
+	goto out;
+
+free_mhi:
+	mhi_driver_unregister(&qaic_mhi_driver);
+free_class:
+	class_destroy(qaic_class);
+free_major:
+	unregister_chrdev_region(MKDEV(qaic_major, 0), QAIC_MAX_MINORS);
+out:
+	return ret;
 }
 
 static void __exit qaic_exit(void)
 {
+	pr_debug("qaic: exit\n");
 	pci_unregister_driver(&qaic_pci_driver);
+	mhi_driver_unregister(&qaic_mhi_driver);
+	class_destroy(qaic_class);
+	unregister_chrdev_region(MKDEV(qaic_major, 0), QAIC_MAX_MINORS);
+	idr_destroy(&qaic_devs);
 }
 
 module_init(qaic_init);
