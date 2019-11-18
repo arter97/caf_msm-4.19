@@ -421,7 +421,7 @@ struct mhi_controller *qaic_mhi_register_controller(struct pci_dev *pci_dev,
 
 	mhi_cntl->irq[0] = mhi_irq;
 
-	mhi_cntl->fw_image = "qcom/aic100_sbl.bin";
+	mhi_cntl->fw_image = "qcom/aic100/sbl.bin";
 
 	/* use latest configured timeout */
 	aic100_config.timeout_ms = mhi_timeout;
