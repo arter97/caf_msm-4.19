@@ -14,7 +14,7 @@ module_param(mhi_timeout, uint, 0600);
 static struct mhi_channel_config aic100_channels[] = {
         {
 		.num = 0,
-		.name = "LOOPBACK",
+		.name = "QAIC_LOOPBACK",
 		.num_elements = 32,
 		.event_ring = 0,
 		.dir = DMA_TO_DEVICE,
@@ -30,7 +30,7 @@ static struct mhi_channel_config aic100_channels[] = {
 	},
         {
 		.num = 1,
-		.name = "LOOPBACK",
+		.name = "QAIC_LOOPBACK",
 		.num_elements = 32,
 		.event_ring = 0,
 		.dir = DMA_FROM_DEVICE,
@@ -46,7 +46,7 @@ static struct mhi_channel_config aic100_channels[] = {
 	},
         {
 		.num = 2,
-		.name = "SAHARA",
+		.name = "QAIC_SAHARA",
 		.num_elements = 32,
 		.event_ring = 0,
 		.dir = DMA_TO_DEVICE,
@@ -62,7 +62,7 @@ static struct mhi_channel_config aic100_channels[] = {
 	},
         {
 		.num = 3,
-		.name = "SAHARA",
+		.name = "QAIC_SAHARA",
 		.num_elements = 32,
 		.event_ring = 0,
 		.dir = DMA_FROM_DEVICE,
@@ -78,7 +78,7 @@ static struct mhi_channel_config aic100_channels[] = {
 	},
         {
 		.num = 4,
-		.name = "DIAG",
+		.name = "QAIC_DIAG",
 		.num_elements = 32,
 		.event_ring = 0,
 		.dir = DMA_TO_DEVICE,
@@ -94,7 +94,7 @@ static struct mhi_channel_config aic100_channels[] = {
 	},
         {
 		.num = 5,
-		.name = "DIAG",
+		.name = "QAIC_DIAG",
 		.num_elements = 32,
 		.event_ring = 0,
 		.dir = DMA_FROM_DEVICE,
@@ -110,7 +110,7 @@ static struct mhi_channel_config aic100_channels[] = {
 	},
         {
 		.num = 6,
-		.name = "SSR",
+		.name = "QAIC_SSR",
 		.num_elements = 32,
 		.event_ring = 0,
 		.dir = DMA_TO_DEVICE,
@@ -126,7 +126,7 @@ static struct mhi_channel_config aic100_channels[] = {
 	},
         {
 		.num = 7,
-		.name = "SSR",
+		.name = "QAIC_SSR",
 		.num_elements = 32,
 		.event_ring = 0,
 		.dir = DMA_FROM_DEVICE,
@@ -142,7 +142,7 @@ static struct mhi_channel_config aic100_channels[] = {
 	},
         {
 		.num = 8,
-		.name = "QDSS",
+		.name = "QAIC_QDSS",
 		.num_elements = 32,
 		.event_ring = 0,
 		.dir = DMA_TO_DEVICE,
@@ -158,7 +158,7 @@ static struct mhi_channel_config aic100_channels[] = {
 	},
         {
 		.num = 9,
-		.name = "QDSS",
+		.name = "QAIC_QDSS",
 		.num_elements = 32,
 		.event_ring = 0,
 		.dir = DMA_FROM_DEVICE,
@@ -174,7 +174,7 @@ static struct mhi_channel_config aic100_channels[] = {
 	},
         {
 		.num = 10,
-		.name = "CONTROL",
+		.name = "QAIC_CONTROL",
 		.num_elements = 32,
 		.event_ring = 0,
 		.dir = DMA_TO_DEVICE,
@@ -190,7 +190,7 @@ static struct mhi_channel_config aic100_channels[] = {
 	},
         {
 		.num = 11,
-		.name = "CONTROL",
+		.name = "QAIC_CONTROL",
 		.num_elements = 32,
 		.event_ring = 0,
 		.dir = DMA_FROM_DEVICE,
@@ -206,7 +206,7 @@ static struct mhi_channel_config aic100_channels[] = {
 	},
         {
 		.num = 12,
-		.name = "LOGGING",
+		.name = "QAIC_LOGGING",
 		.num_elements = 32,
 		.event_ring = 0,
 		.dir = DMA_TO_DEVICE,
@@ -222,7 +222,7 @@ static struct mhi_channel_config aic100_channels[] = {
 	},
         {
 		.num = 13,
-		.name = "LOGGING",
+		.name = "QAIC_LOGGING",
 		.num_elements = 32,
 		.event_ring = 0,
 		.dir = DMA_FROM_DEVICE,
@@ -238,7 +238,7 @@ static struct mhi_channel_config aic100_channels[] = {
 	},
         {
 		.num = 14,
-		.name = "STATUS",
+		.name = "QAIC_STATUS",
 		.num_elements = 32,
 		.event_ring = 0,
 		.dir = DMA_TO_DEVICE,
@@ -254,7 +254,7 @@ static struct mhi_channel_config aic100_channels[] = {
 	},
         {
 		.num = 15,
-		.name = "STATUS",
+		.name = "QAIC_STATUS",
 		.num_elements = 32,
 		.event_ring = 0,
 		.dir = DMA_FROM_DEVICE,
@@ -270,7 +270,7 @@ static struct mhi_channel_config aic100_channels[] = {
 	},
         {
 		.num = 16,
-		.name = "TELEMETRY",
+		.name = "QAIC_TELEMETRY",
 		.num_elements = 32,
 		.event_ring = 0,
 		.dir = DMA_TO_DEVICE,
@@ -286,7 +286,7 @@ static struct mhi_channel_config aic100_channels[] = {
 	},
         {
 		.num = 17,
-		.name = "TELEMETRY",
+		.name = "QAIC_TELEMETRY",
 		.num_elements = 32,
 		.event_ring = 0,
 		.dir = DMA_FROM_DEVICE,
@@ -302,7 +302,7 @@ static struct mhi_channel_config aic100_channels[] = {
 	},
         {
 		.num = 18,
-		.name = "DEBUG",
+		.name = "QAIC_DEBUG",
 		.num_elements = 32,
 		.event_ring = 0,
 		.dir = DMA_TO_DEVICE,
@@ -318,7 +318,7 @@ static struct mhi_channel_config aic100_channels[] = {
 	},
         {
 		.num = 19,
-		.name = "DEBUG",
+		.name = "QAIC_DEBUG",
 		.num_elements = 32,
 		.event_ring = 0,
 		.dir = DMA_FROM_DEVICE,
