@@ -10,8 +10,10 @@
 #include <linux/module.h>
 #include <linux/mutex.h>
 #include <linux/pci.h>
+#include <uapi/misc/qaic.h>
 
 #include "mhi_controller.h"
+#include "qaic.h"
 
 #define PCI_VENDOR_ID_QTI		0x17cb
 
@@ -27,21 +29,14 @@ static DEFINE_MUTEX(qaic_devs_lock);
 
 static int qaic_device_open(struct inode *inode, struct file *filp);
 static int qaic_device_release(struct inode *inode, struct file *filp);
-
-struct qaic_device {
-	struct pci_dev		*pdev;
-	int 			bars;
-	void __iomem		*bar_0;
-	struct mhi_controller 	*mhi_cntl;
-	struct mhi_device	*cntl_ch;
-	struct cdev		cdev;
-	struct device		*dev;
-};
+static long qaic_ioctl(struct file *filep, unsigned int cmd, unsigned long arg);
 
 static const struct file_operations qaic_ops = {
 	.owner = THIS_MODULE,
 	.open = qaic_device_open,
 	.release = qaic_device_release,
+	.unlocked_ioctl = qaic_ioctl,
+	.compat_ioctl = qaic_ioctl,
 };
 
 static int qaic_device_open(struct inode *inode, struct file *filp)
@@ -74,6 +69,35 @@ static int qaic_device_release(struct inode *inode, struct file *filp)
 	return 0;
 }
 
+static long qaic_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
+{
+	struct qaic_device *qdev = filp->private_data;
+	unsigned int nr = _IOC_NR(cmd);
+	int ret;
+
+	pci_dbg(qdev->pdev, "%s pid:%d cmd:0x%x (%c nr=%d len=%d dir=%d)\n",
+		__func__, current->pid, cmd, _IOC_TYPE(cmd), _IOC_NR(cmd),
+		_IOC_SIZE(cmd), _IOC_DIR(cmd));
+
+	if (_IOC_TYPE(cmd) != 'Q')
+		return -ENOTTY;
+
+	switch (nr) {
+	case QAIC_IOCTL_MANAGE_NR:
+		if (_IOC_DIR(cmd) != (_IOC_READ | _IOC_WRITE) ||
+		    _IOC_SIZE(cmd) != sizeof(struct manage_msg)) {
+			ret = -EINVAL;
+			break;
+		}
+		ret = qaic_manage_ioctl(qdev, arg);
+		break;
+	default:
+		return -ENOTTY;
+	}
+
+	return ret;
+}
+
 static int qaic_mhi_probe(struct mhi_device *mhi_dev,
 			  const struct mhi_device_id *id)
 {
@@ -100,13 +124,19 @@ static int qaic_mhi_probe(struct mhi_device *mhi_dev,
 	mhi_device_set_devdata(mhi_dev, qdev);
 	qdev->cntl_ch = mhi_dev;
 
+	ret = qaic_control_open(qdev);
+	if (ret) {
+		pci_dbg(qdev->pdev, "%s: control_open failed %d\n", __func__, ret);
+		goto err;
+	}
+
 	mutex_lock(&qaic_devs_lock);
 	ret = idr_alloc(&qaic_devs, qdev, 0, QAIC_MAX_MINORS, GFP_KERNEL);
 	mutex_unlock(&qaic_devs_lock);
 
 	if (ret < 0) {
 		pci_dbg(qdev->pdev, "%s: idr_alloc failed %d\n", __func__, ret);
-		goto err;
+		goto close_control;
 	}
 
 	devno = MKDEV(qaic_major, ret);
@@ -141,6 +171,8 @@ free_idr:
 	mutex_lock(&qaic_devs_lock);
 	idr_remove(&qaic_devs, MINOR(devno));
 	mutex_unlock(&qaic_devs_lock);
+close_control:
+	qaic_control_close(qdev);
 err:
 	return ret;
 }
@@ -165,16 +197,6 @@ static void qaic_mhi_remove(struct mhi_device *mhi_dev)
 	mutex_unlock(&qaic_devs_lock);
 }
 
-static void qaic_mhi_ul_xfer_cb(struct mhi_device *mhi_dev,
-				struct mhi_result *mhi_result)
-{
-}
-
-static void qaic_mhi_dl_xfer_cb(struct mhi_device *mhi_dev,
-				struct mhi_result *mhi_result)
-{
-}
-
 static int qaic_pci_probe(struct pci_dev *pdev,
 			  const struct pci_device_id *id)
 {
@@ -184,7 +206,7 @@ static int qaic_pci_probe(struct pci_dev *pdev,
 
 	pci_dbg(pdev, "%s\n", __func__);
 
-	qdev = kmalloc(sizeof(*qdev), GFP_KERNEL);
+	qdev = kzalloc(sizeof(*qdev), GFP_KERNEL);
 	if (!qdev) {
 		ret = -ENOMEM;
 		goto qdev_fail;
@@ -192,6 +214,8 @@ static int qaic_pci_probe(struct pci_dev *pdev,
 
 	pci_set_drvdata(pdev, qdev);
 	qdev->pdev = pdev;
+	mutex_init(&qdev->cntl_mutex);
+	INIT_LIST_HEAD(&qdev->cntl_xfer_list);
 
 	qdev->bars = pci_select_bars(pdev, IORESOURCE_MEM);
 

@@ -5,4 +5,4 @@
 
 obj-$(CONFIG_QAIC)	:= qaic.o
 
-qaic-y := qaic_drv.o mhi_controller.o
+qaic-y := qaic_drv.o mhi_controller.o qaic_control.o
