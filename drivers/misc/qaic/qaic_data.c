@@ -251,3 +251,44 @@ int qaic_mem_ioctl(struct qaic_device *qdev, struct qaic_user *usr,
 out:
 	return ret;
 }
+
+int qaic_data_mmap(struct qaic_device *qdev, struct qaic_user *usr,
+		   struct vm_area_struct *vma)
+{
+	unsigned long offset = 0;
+	struct mem_handle *mem;
+	struct scatterlist *sg;
+	int handle;
+	int dbc_id;
+	int ret;
+
+	dbc_id = (vma->vm_pgoff & PGOFF_DBC_MASK) >> PGOFF_DBC_SHIFT;
+	handle = vma->vm_pgoff & ~PGOFF_DBC_MASK;
+
+	if (dbc_id >= QAIC_NUM_DBC) {
+		ret = -EINVAL;
+		goto out;
+	}
+
+	ret = mutex_lock_interruptible(&qdev->dbc[dbc_id].mem_lock);
+	if (ret)
+		goto out;
+	mem = idr_find(&qdev->dbc[dbc_id].mem_handles, handle);
+	mutex_unlock(&qdev->dbc[dbc_id].mem_lock);
+	if (!mem) {
+		ret = -ENODEV;
+		goto out;
+	}
+
+	for (sg = mem->sgt->sgl; sg; sg = sg_next(sg)) {
+		if (sg_page(sg)) {
+			ret = vm_insert_page(vma, vma->vm_start + offset,
+					     sg_page(sg));
+			if (ret)
+				goto out;
+			offset += sg->length;
+		}
+	}
+out:
+	return ret;
+}

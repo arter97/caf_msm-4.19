@@ -29,7 +29,8 @@ static DEFINE_MUTEX(qaic_devs_lock);
 
 static int qaic_device_open(struct inode *inode, struct file *filp);
 static int qaic_device_release(struct inode *inode, struct file *filp);
-static long qaic_ioctl(struct file *filep, unsigned int cmd, unsigned long arg);
+static long qaic_ioctl(struct file *filp, unsigned int cmd, unsigned long arg);
+static int qaic_mmap(struct file *filp, struct vm_area_struct *vma);
 
 static const struct file_operations qaic_ops = {
 	.owner = THIS_MODULE,
@@ -37,6 +38,7 @@ static const struct file_operations qaic_ops = {
 	.release = qaic_device_release,
 	.unlocked_ioctl = qaic_ioctl,
 	.compat_ioctl = qaic_ioctl,
+	.mmap = qaic_mmap,
 };
 
 static int qaic_device_open(struct inode *inode, struct file *filp)
@@ -114,6 +116,14 @@ static long qaic_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 	}
 
 	return ret;
+}
+
+static int qaic_mmap(struct file *filp, struct vm_area_struct *vma)
+{
+	struct qaic_user *usr = filp->private_data;
+	struct qaic_device *qdev = usr->qdev;
+
+	return qaic_data_mmap(qdev, usr, vma);
 }
 
 static int qaic_mhi_probe(struct mhi_device *mhi_dev,

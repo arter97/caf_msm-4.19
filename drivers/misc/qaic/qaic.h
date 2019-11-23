@@ -52,6 +52,8 @@ int qaic_manage_ioctl(struct qaic_device *qdev, struct qaic_user *usr,
 		      unsigned long arg);
 int qaic_mem_ioctl(struct qaic_device *qdev, struct qaic_user *usr,
 		   unsigned long arg);
+int qaic_data_mmap(struct qaic_device *qdev, struct qaic_user *usr,
+		   struct vm_area_struct *vma);
 
 void qaic_mhi_ul_xfer_cb(struct mhi_device *mhi_dev,
 			 struct mhi_result *mhi_result);
