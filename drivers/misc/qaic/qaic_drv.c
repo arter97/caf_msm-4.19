@@ -42,6 +42,7 @@ static const struct file_operations qaic_ops = {
 static int qaic_device_open(struct inode *inode, struct file *filp)
 {
 	struct qaic_device *qdev;
+	struct qaic_user *usr;
 	int ret;
 
 	ret = mutex_lock_interruptible(&qaic_devs_lock);
@@ -52,7 +53,13 @@ static int qaic_device_open(struct inode *inode, struct file *filp)
 
 	pci_dbg(qdev->pdev, "%s pid:%d\n", __func__, current->pid);
 
-	filp->private_data = qdev;
+	usr = kmalloc(sizeof(*usr), GFP_KERNEL);
+	if (!usr)
+		return -ENOMEM;
+
+	usr->handle = current->pid;
+	usr->qdev = qdev;
+	filp->private_data = usr;
 
 	nonseekable_open(inode, filp);
 
@@ -61,17 +68,20 @@ static int qaic_device_open(struct inode *inode, struct file *filp)
 
 static int qaic_device_release(struct inode *inode, struct file *filp)
 {
-	struct qaic_device *qdev = filp->private_data;
+	struct qaic_user *usr = filp->private_data;
+	struct qaic_device *qdev = usr->qdev;
 
 	pci_dbg(qdev->pdev, "%s pid:%d\n", __func__, current->pid);
 
 	filp->private_data = NULL;
+	kfree(usr);
 	return 0;
 }
 
 static long qaic_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 {
-	struct qaic_device *qdev = filp->private_data;
+	struct qaic_user *usr = filp->private_data;
+	struct qaic_device *qdev = usr->qdev;
 	unsigned int nr = _IOC_NR(cmd);
 	int ret;
 
@@ -89,7 +99,15 @@ static long qaic_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 			ret = -EINVAL;
 			break;
 		}
-		ret = qaic_manage_ioctl(qdev, arg);
+		ret = qaic_manage_ioctl(qdev, usr, arg);
+		break;
+	case QAIC_IOCTL_MEM_NR:
+		if (_IOC_DIR(cmd) != (_IOC_READ | _IOC_WRITE) ||
+		    _IOC_SIZE(cmd) != sizeof(struct mem_req)) {
+			ret = -EINVAL;
+			break;
+		}
+		ret = qaic_mem_ioctl(qdev, usr, arg);
 		break;
 	default:
 		return -ENOTTY;
@@ -201,6 +219,7 @@ static int qaic_pci_probe(struct pci_dev *pdev,
 			  const struct pci_device_id *id)
 {
 	int ret;
+	int i;
 	int mhi_irq;
 	struct qaic_device *qdev;
 
@@ -216,6 +235,10 @@ static int qaic_pci_probe(struct pci_dev *pdev,
 	qdev->pdev = pdev;
 	mutex_init(&qdev->cntl_mutex);
 	INIT_LIST_HEAD(&qdev->cntl_xfer_list);
+	for (i = 0; i < QAIC_NUM_DBC; ++i) {
+		mutex_init(&qdev->dbc[i].mem_lock);
+		idr_init(&qdev->dbc[i].mem_handles);
+	}
 
 	qdev->bars = pci_select_bars(pdev, IORESOURCE_MEM);
 

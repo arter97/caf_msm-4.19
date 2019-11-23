@@ -70,7 +70,17 @@ struct manage_msg {
 	__u8 data[MANAGE_MAX_MSG_LENGTH];
 };
 
+struct mem_req {
+	__u64 handle; /* 0 to alloc, or a valid handle to free */
+	__u64 size;   /* size to alloc, will be rounded to PAGE_SIZE */
+	__u32 dir;    /* direction of data: 0 = bidirectional data,
+			 1 = to device, 2 = from device */
+	__u32 dbc_id; /* Identifier of assigned DMA Bridge channel */
+	__u64 resv;   /* reserved for future use, must be 0 */
+};
+
 #define QAIC_IOCTL_MANAGE_NR	0x01
+#define QAIC_IOCTL_MEM_NR	0x02
 
 /*
  * Send Manage command to the device
@@ -96,5 +106,29 @@ struct manage_msg {
  * EFAULT    - Error in accessing memory from user
  */
 #define QAIC_IOCTL_MANAGE _IOWR('Q', QAIC_IOCTL_MANAGE_NR, struct manage_msg)
+
+/*
+ * Memory alloc/free
+ *
+ * Allows user to request buffers to send/receive data to/from the device
+ * via a DMA Bridge channel.  An allocated buffer may then be mmap'd to be
+ * accessed.  Buffers are tied to a specific dbc.  It is expected that the
+ * user will request a pool of buffers, and reuse the buffers as necessary
+ * to send/receive multiple sets of data with the device over time.
+ *
+ * The handle to the allocated buffer will be returned in the struct upon
+ * success.  A buffer to be freed cannot be accessed after the ioctl is called.
+ *
+ * The return value is 0 for success, or a standard error code.  Some of the
+ * possible errors:
+ *
+ * EINTR  - Kernel waiting was interrupted (IE received a signal for user)
+ * ENOMEM - Unable to obtain memory while processing request
+ * EPERM  - Invalid permissions to access resource
+ * EINVAL - Invalid request
+ * EFAULT - Error in accessing memory from user
+ * ENODEV - Resource does not exist
+ */
+#define QAIC_IOCTL_MEM _IOWR('Q', QAIC_IOCTL_MEM_NR, struct mem_req)
 
 #endif /* QAIC_H_ */

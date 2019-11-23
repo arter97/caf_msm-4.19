@@ -112,7 +112,8 @@ struct ioctl_resources {
 };
 
 static void save_dbc_buf(struct qaic_device *qdev,
-			 struct ioctl_resources *resources)
+			 struct ioctl_resources *resources,
+			 struct qaic_user *usr)
 {
 	u32 dbc_id = resources->dbc_id;
 
@@ -121,6 +122,7 @@ static void save_dbc_buf(struct qaic_device *qdev,
 	qdev->dbc[dbc_id].dma_addr = resources->dma_addr;
 	qdev->dbc[dbc_id].total_size = resources->total_size;
 	qdev->dbc[dbc_id].nelem = resources->nelem;
+	qdev->dbc[dbc_id].usr = usr;
 	resources->buf = 0;
 }
 static void free_dbc_buf(struct qaic_device *qdev,
@@ -575,7 +577,8 @@ static void *msg_xfer(struct qaic_device *qdev, void *in_buf, size_t in_len,
 	return elem.buf;
 }
 
-int qaic_manage_ioctl(struct qaic_device *qdev, unsigned long arg)
+int qaic_manage_ioctl(struct qaic_device *qdev, struct qaic_user *usr,
+		      unsigned long arg)
 {
 	struct ioctl_resources resources;
 	struct manage_msg *user_msg;
@@ -620,7 +623,7 @@ int qaic_manage_ioctl(struct qaic_device *qdev, unsigned long arg)
 	msg->hdr.sequence_number = cpu_to_le32(qdev->next_seq_num++);
 	msg->hdr.len = cpu_to_le32(msg->hdr.len);
 	msg->hdr.count = cpu_to_le32(msg->hdr.count);
-	msg->hdr.handle = cpu_to_le32(current->pid);
+	msg->hdr.handle = cpu_to_le32(usr->handle);
 
 	/* msg_xfer releases the mutex */
 	rsp = msg_xfer(qdev, msg, sizeof(*msg), qdev->next_seq_num - 1);
@@ -641,7 +644,7 @@ int qaic_manage_ioctl(struct qaic_device *qdev, unsigned long arg)
 	if (resources.status)
 		free_dbc_buf(qdev, &resources);
 	else
-		save_dbc_buf(qdev, &resources);
+		save_dbc_buf(qdev, &resources, usr);
 	ret = 0;
 
 copy_to_user_failed:
