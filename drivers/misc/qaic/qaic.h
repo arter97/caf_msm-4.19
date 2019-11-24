@@ -15,6 +15,10 @@
 #define QAIC_NUM_DBC		16
 #define QAIC_DBC_REQ_ELEM_SIZE	0x40
 #define QAIC_DBC_RSP_ELEM_SIZE	0x4
+#define QAIC_DBC_BASE		0x20000
+#define QAIC_DBC_SIZE		0x1000
+
+#define QAIC_DBC_OFF(i)		((i) * QAIC_DBC_SIZE + QAIC_DBC_BASE)
 
 struct qaic_user {
 	pid_t handle;
@@ -31,12 +35,16 @@ struct dma_bridge_chan {
 	struct mutex		mem_lock;
 	struct idr		mem_handles;
 	struct qaic_user	*usr;
+	u16			next_req_id;
+	void __iomem		*dbc_base;
+	struct mutex		xfer_lock;
 };
 
 struct qaic_device {
 	struct pci_dev		*pdev;
 	int			bars;
 	void __iomem		*bar_0;
+	void __iomem		*bar_2;
 	struct mhi_controller	*mhi_cntl;
 	struct mhi_device	*cntl_ch;
 	struct list_head	cntl_xfer_list;
@@ -52,6 +60,8 @@ int qaic_manage_ioctl(struct qaic_device *qdev, struct qaic_user *usr,
 		      unsigned long arg);
 int qaic_mem_ioctl(struct qaic_device *qdev, struct qaic_user *usr,
 		   unsigned long arg);
+int qaic_execute_ioctl(struct qaic_device *qdev, struct qaic_user *usr,
+		       unsigned long arg);
 int qaic_data_mmap(struct qaic_device *qdev, struct qaic_user *usr,
 		   struct vm_area_struct *vma);
 

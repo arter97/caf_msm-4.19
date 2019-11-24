@@ -11,6 +11,21 @@
 
 #define MANAGE_MAX_MSG_LENGTH 236
 
+enum sem_flags {
+	SEM_INSYNCFENCE =	0x1,
+	SEM_OUTSYNCFENCE =	0x2,
+};
+
+enum sem_cmd {
+	SEM_NOP =		0,
+	SEM_INIT =		1,
+	SEM_INC =		2,
+	SEM_DEC =		3,
+	SEM_WAIT_EQUAL =	4,
+	SEM_WAIT_GT_EQ =	5, /* Greater than or equal */
+	SEM_WAIT_GT_0 =		6, /* Greater than 0 */
+};
+
 enum manage_transaction_type {
 	TRANS_UNDEFINED =		0,
 	TRANS_PASSTHROUGH_FROM_USR =	1,
@@ -79,8 +94,35 @@ struct mem_req {
 	__u64 resv;   /* reserved for future use, must be 0 */
 };
 
+struct sem { /* semaphore command */
+	__u16 val;     /* only lower 12 bits are valid */
+	__u8  index;   /* only lower 5 bits are valid */
+	__u8  presync; /* 1 if presync operation, 0 if postsync */
+	__u8  cmd;     /* see enum sem_cmd */
+	__u8  flags;   /* see sem_flags for valid bits.  All others must be 0 */
+	__u16 resv;    /* reserved for future use, must be 0 */
+};
+
+struct execute {
+	__u16		ver;    /* struct version, must be 1 */
+	__u8		dir;    /* 1 = to device, 2 = from device */
+	__u8		db_len; /* doorbell length - 32, 16, or 8 bits. 0 means
+				   doorbell is inactive */
+	__u32		db_data;/* data to write to doorbell */
+	__u64		db_addr;/* doorbell address */
+	__u64		handle; /* mem handle from mem_req */
+	__u64		dev_addr;
+	__u32		dbc_id; /* Identifier of assigned DMA Bridge channel */
+	__u32		resv;   /* reserved for future use, must be 0 */
+	struct sem	sem0;   /* Must be zero if not valid */
+	struct sem	sem1;   /* Must be zero if not valid */
+	struct sem	sem2;   /* Must be zero if not valid */
+	struct sem	sem3;   /* Must be zero if not valid */
+};
+
 #define QAIC_IOCTL_MANAGE_NR	0x01
 #define QAIC_IOCTL_MEM_NR	0x02
+#define QAIC_IOCTL_EXECUTE_NR	0x03
 
 /*
  * Send Manage command to the device
@@ -130,5 +172,27 @@ struct mem_req {
  * ENODEV - Resource does not exist
  */
 #define QAIC_IOCTL_MEM _IOWR('Q', QAIC_IOCTL_MEM_NR, struct mem_req)
+
+/*
+ * Execute DMA Bridge transaction
+ *
+ * Allows user to execute a DMA Bridge transaction using a previously allocated
+ * memory resource.  This operation is non-blocking - success return only
+ * indicates the transaction is queued with the hardware, not that it is
+ * complete.  The user must ensure that the transaction is complete before
+ * reusing the memory resource.  It is invalid to attempt to execute multiple
+ * transactions concurrently which use the same memory resource in the same
+ * direction.
+ *
+ * The return value is 0 for success, or a standard error code.  Some of the
+ * possible errors:
+ *
+ * ENOMEM - Unable to obtain memory while processing request
+ * EPERM  - Invalid permissions to access resource
+ * EINVAL - Invalid request
+ * EFAULT - Error in accessing memory from user
+ * ENODEV - Resource does not exist
+ */
+#define QAIC_IOCTL_EXECUTE _IOW('Q', QAIC_IOCTL_EXECUTE_NR, struct execute)
 
 #endif /* QAIC_H_ */

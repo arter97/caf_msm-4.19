@@ -13,6 +13,25 @@
 
 #define PGOFF_DBC_SHIFT 32
 #define PGOFF_DBC_MASK	GENMASK_ULL(63, 32)
+#define SEM_VAL_MASK	GENMASK_ULL(11, 0)
+#define SEM_INDEX_MASK	GENMASK_ULL(4, 0)
+#define BULK_XFER	BIT(3)
+#define GEN_COMPLETION	BIT(4)
+#define INBOUND_XFER	1
+#define OUTBOUND_XFER	2
+#define REQHP_OFF	0x0 /* we read this */
+#define REQTP_OFF	0x4 /* we write this */
+#define RSPHP_OFF	0x8 /* we write this */
+#define RSPTP_OFF	0xc /* we read this */
+
+#define ENCODE_SEM(val, index, sync, cmd, flags)			\
+			((val) |					\
+			(index) << 16 |					\
+			(sync) << 22 |					\
+			(cmd) << 24 |					\
+			((cmd) ? BIT(31) : 0) |				\
+			(((flags) & SEM_INSYNCFENCE) ? BIT(30) : 0) |	\
+			(((flags) & SEM_OUTSYNCFENCE) ? BIT(29) : 0))
 
 struct dbc_req { /* everything must be little endian encoded */
 	u16	req_id;
@@ -289,6 +308,223 @@ int qaic_data_mmap(struct qaic_device *qdev, struct qaic_user *usr,
 			offset += sg->length;
 		}
 	}
+out:
+	return ret;
+}
+
+static bool invalid_sem(struct sem *sem)
+{
+	if (sem->val & ~SEM_VAL_MASK || sem->index & ~SEM_INDEX_MASK ||
+	    !(sem->presync == 0 || sem->presync == 1) || sem->resv ||
+	    sem->flags & ~(SEM_INSYNCFENCE | SEM_OUTSYNCFENCE) ||
+	    sem->cmd > SEM_WAIT_GT_0)
+		return true;
+	return false;
+}
+
+static int encode_execute(struct qaic_device *qdev, struct mem_handle *mem,
+			  struct execute *exec, u16 req_id)
+{
+	u8 cmd = BULK_XFER | GEN_COMPLETION |
+		 (exec->dir == DMA_TO_DEVICE ? INBOUND_XFER : OUTBOUND_XFER);
+
+	u64 db_addr = cpu_to_le64(exec->db_addr);
+	u8 db_len;
+	u32 db_data = cpu_to_le32(exec->db_data);
+	struct scatterlist *sg;
+	u64 dev_addr;
+	int i;
+
+	req_id = cpu_to_le16(req_id);
+
+	if (exec->db_len && !IS_ALIGNED(exec->db_addr, exec->db_len / 8))
+		return -EINVAL;
+
+	switch (exec->db_len) {
+	case 32:
+		db_len = BIT(7);
+		break;
+	case 16:
+		db_len = BIT(7) | 1;
+		break;
+	case 8:
+		db_len = BIT(7) | 2;
+		break;
+	case 0:
+		db_len = 0; /* doorbell is not active for this command */
+		break;
+	default:
+		return -EINVAL; /* should never hit this */
+	}
+
+	dev_addr = exec->dev_addr;
+	for_each_sg(mem->sgt->sgl, sg, mem->nents, i) {
+		mem->reqs[i].req_id = req_id;
+		mem->reqs[i].cmd = cmd;
+		mem->reqs[i].db_addr = db_addr;
+		mem->reqs[i].db_len = db_len;
+		mem->reqs[i].db_data = db_data;
+		mem->reqs[i].src_addr =
+			cpu_to_le64(exec->dir == DMA_TO_DEVICE ?
+					sg_dma_address(sg) : dev_addr);
+		mem->reqs[i].dest_addr =
+			cpu_to_le64(exec->dir == DMA_TO_DEVICE ?
+					dev_addr : sg_dma_address(sg));
+		mem->reqs[i].len = cpu_to_le32(sg_dma_len(sg));
+		mem->reqs[i].sem_cmd0 = cpu_to_le32(ENCODE_SEM(exec->sem0.val,
+							exec->sem0.index,
+							exec->sem0.presync,
+							exec->sem0.cmd,
+							exec->sem0.flags));
+		mem->reqs[i].sem_cmd1 = cpu_to_le32(ENCODE_SEM(exec->sem1.val,
+							exec->sem1.index,
+							exec->sem1.presync,
+							exec->sem1.cmd,
+							exec->sem1.flags));
+		mem->reqs[i].sem_cmd2 = cpu_to_le32(ENCODE_SEM(exec->sem2.val,
+							exec->sem2.index,
+							exec->sem2.presync,
+							exec->sem2.cmd,
+							exec->sem2.flags));
+		mem->reqs[i].sem_cmd3 = cpu_to_le32(ENCODE_SEM(exec->sem3.val,
+							exec->sem3.index,
+							exec->sem3.presync,
+							exec->sem3.cmd,
+							exec->sem3.flags));
+		dev_addr += sg_dma_len(sg);
+	}
+
+	return 0;
+}
+
+static int commit_execute(struct qaic_device *qdev, struct mem_handle *mem,
+			  u32 dbc_id)
+{
+	struct dma_bridge_chan *dbc = &qdev->dbc[dbc_id];
+	u32 head = le32_to_cpu(__raw_readl(dbc->dbc_base + REQHP_OFF));
+	u32 tail = le32_to_cpu(__raw_readl(dbc->dbc_base + REQTP_OFF));
+	u32 avail = head - tail;
+	struct dbc_req *reqs = mem->reqs;
+	bool two_copy;
+
+	if (head <= tail)
+		avail += dbc->nelem;
+	else
+		two_copy = true;
+
+	--avail;
+
+	if (avail < mem->nents)
+		return -EAGAIN;
+
+	if (two_copy) {
+		avail = dbc->nelem - tail;
+		avail = min_t(u32, avail, mem->nents);
+		memcpy(dbc->req_q_base + tail * QAIC_DBC_REQ_ELEM_SIZE,
+		       reqs, sizeof(*reqs) * avail);
+		reqs += avail;
+		avail = mem->nents - avail;
+		if (avail)
+			memcpy(dbc->req_q_base, reqs, sizeof(*reqs) * avail);
+	} else {
+		memcpy(dbc->req_q_base + tail * QAIC_DBC_REQ_ELEM_SIZE,
+		       reqs, sizeof(*reqs) * mem->nents);
+	}
+
+	tail = (tail + mem->nents) % dbc->nelem;
+	__raw_writel(cpu_to_le32(tail), dbc->dbc_base + REQTP_OFF);
+	return 0;
+}
+
+int qaic_execute_ioctl(struct qaic_device *qdev, struct qaic_user *usr,
+		       unsigned long arg)
+{
+	struct mem_handle *mem;
+	struct execute *exec;
+	u16 req_id;
+	int handle;
+	int dbc_id;
+	int ret;
+
+	exec = kmalloc(sizeof(*exec), GFP_KERNEL);
+	if (!exec) {
+		ret = -ENOMEM;
+		goto out;
+	}
+
+	if (copy_from_user(exec, (void __user *)arg, sizeof(*exec))) {
+		ret = -EFAULT;
+		goto free_exec;
+	}
+
+	if (exec->dbc_id > QAIC_NUM_DBC || exec->ver != 1 ||
+	    !(exec->dir == 1 || exec->dir == 2) ||
+	    !(exec->db_len == 32 || exec->db_len == 16 || exec->db_len == 8 ||
+	      exec->db_len == 0) ||
+	    invalid_sem(&exec->sem0) || invalid_sem(&exec->sem1) ||
+	    invalid_sem(&exec->sem2) || invalid_sem(&exec->sem3) ||
+	    exec->resv) {
+		ret = -EINVAL;
+		goto free_exec;
+	}
+
+	if (!qdev->dbc[exec->dbc_id].usr ||
+	    qdev->dbc[exec->dbc_id].usr->handle != usr->handle) {
+		ret = -EPERM;
+		goto free_exec;
+	}
+
+	handle = exec->handle & ~PGOFF_DBC_MASK;
+	dbc_id = (exec->handle & PGOFF_DBC_MASK) >> PGOFF_DBC_SHIFT;
+
+	/* we shifted up by PAGE_SHIFT to make mmap happy, need to undo that */
+	handle >>= PAGE_SHIFT;
+	dbc_id >>= PAGE_SHIFT;
+
+	if (dbc_id != exec->dbc_id) {
+		ret = -EINVAL;
+		goto free_exec;
+	}
+
+	ret = mutex_lock_interruptible(&qdev->dbc[exec->dbc_id].mem_lock);
+	if (ret)
+		goto free_exec;
+	mem = idr_find(&qdev->dbc[exec->dbc_id].mem_handles, handle);
+	mutex_unlock(&qdev->dbc[exec->dbc_id].mem_lock);
+	if (!mem) {
+		ret = -ENODEV;
+		goto free_exec;
+	}
+
+	if (mem->dir != DMA_BIDIRECTIONAL && mem->dir != exec->dir) {
+		ret = -EINVAL;
+		goto free_exec;
+	}
+
+	mutex_lock(&qdev->dbc[exec->dbc_id].xfer_lock);
+	req_id = qdev->dbc[exec->dbc_id].next_req_id++;
+	mutex_unlock(&qdev->dbc[exec->dbc_id].xfer_lock);
+
+	ret = encode_execute(qdev, mem, exec, req_id);
+	if (ret)
+		goto free_exec;
+
+	dma_sync_sg_for_device(&qdev->pdev->dev, mem->sgt->sgl, mem->sgt->nents,
+			       mem->dir);
+
+	mutex_lock(&qdev->dbc[exec->dbc_id].xfer_lock);
+	ret = commit_execute(qdev, mem, exec->dbc_id);
+	mutex_unlock(&qdev->dbc[exec->dbc_id].xfer_lock);
+	if (ret)
+		goto sync_to_cpu;
+
+	goto free_exec;
+
+sync_to_cpu:
+	dma_sync_sg_for_cpu(&qdev->pdev->dev, mem->sgt->sgl, mem->sgt->nents,
+			    mem->dir);
+free_exec:
+	kfree(exec);
 out:
 	return ret;
 }

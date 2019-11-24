@@ -111,6 +111,14 @@ static long qaic_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		}
 		ret = qaic_mem_ioctl(qdev, usr, arg);
 		break;
+	case QAIC_IOCTL_EXECUTE_NR:
+		if (_IOC_DIR(cmd) != _IOC_WRITE ||
+		    _IOC_SIZE(cmd) != sizeof(struct execute)) {
+			ret = -EINVAL;
+			break;
+		}
+		ret = qaic_execute_ioctl(qdev, usr, arg);
+		break;
 	default:
 		return -ENOTTY;
 	}
@@ -247,6 +255,7 @@ static int qaic_pci_probe(struct pci_dev *pdev,
 	INIT_LIST_HEAD(&qdev->cntl_xfer_list);
 	for (i = 0; i < QAIC_NUM_DBC; ++i) {
 		mutex_init(&qdev->dbc[i].mem_lock);
+		mutex_init(&qdev->dbc[i].xfer_lock);
 		idr_init(&qdev->dbc[i].mem_handles);
 	}
 
@@ -282,6 +291,15 @@ static int qaic_pci_probe(struct pci_dev *pdev,
 		goto ioremap_0_fail;
 	}
 
+	qdev->bar_2 = pci_ioremap_bar(pdev, 2);
+	if (!qdev->bar_2) {
+		ret = -ENOMEM;
+		goto ioremap_2_fail;
+	}
+
+	for (i = 0; i < QAIC_NUM_DBC; ++i)
+		qdev->dbc[i].dbc_base = qdev->bar_2 + QAIC_DBC_OFF(i);
+
 	ret = pci_alloc_irq_vectors(pdev, 1, 32, PCI_IRQ_MSI);
 	if (ret < 0)
 		goto alloc_irq_fail;
@@ -308,6 +326,8 @@ mhi_register_fail:
 get_mhi_irq_fail:
 	pci_free_irq_vectors(pdev);
 alloc_irq_fail:
+	iounmap(qdev->bar_2);
+ioremap_2_fail:
 	iounmap(qdev->bar_0);
 ioremap_0_fail:
 dma_mask_fail:
