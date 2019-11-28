@@ -75,6 +75,8 @@ static int qaic_device_release(struct inode *inode, struct file *filp)
 
 	pci_dbg(qdev->pdev, "%s pid:%d\n", __func__, current->pid);
 
+	qaic_release_usr(qdev, usr);
+
 	filp->private_data = NULL;
 	kfree(usr);
 	return 0;

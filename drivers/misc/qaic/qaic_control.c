@@ -38,6 +38,11 @@ struct _msg {
 	u8 data[MANAGE_MAX_MSG_LENGTH];
 } __packed;
 
+struct wrapper_msg {
+	bool free_on_xmit;
+	struct _msg msg;
+};
+
 struct _trans_hdr {
 	u32 type;
 	u32 len;
@@ -520,7 +525,7 @@ static int decode_message(struct qaic_device *qdev, struct manage_msg *user_msg,
 }
 
 static void *msg_xfer(struct qaic_device *qdev, void *in_buf, size_t in_len,
-		      u32 seq_num)
+		      u32 seq_num, bool nowait)
 {
 	struct xfer_queue_elem elem;
 	struct _msg *out_buf;
@@ -559,6 +564,11 @@ static void *msg_xfer(struct qaic_device *qdev, void *in_buf, size_t in_len,
 		return ERR_PTR(ret);
 	}
 
+	if (nowait) {
+		mutex_unlock(&qdev->cntl_mutex);
+		return NULL;
+	}
+
 	list_add_tail(&elem.list, &qdev->cntl_xfer_list);
 	mutex_unlock(&qdev->cntl_mutex);
 
@@ -582,6 +592,7 @@ int qaic_manage_ioctl(struct qaic_device *qdev, struct qaic_user *usr,
 {
 	struct ioctl_resources resources;
 	struct manage_msg *user_msg;
+	struct wrapper_msg *wrapper;
 	struct _msg *msg;
 	struct _msg *rsp;
 	int ret;
@@ -606,11 +617,13 @@ int qaic_manage_ioctl(struct qaic_device *qdev, struct qaic_user *usr,
 		goto copy_from_user_failed;
 	}
 
-	msg = kzalloc(sizeof(*msg), GFP_KERNEL);
-	if (!msg) {
+	wrapper = kzalloc(sizeof(*wrapper), GFP_KERNEL);
+	if (!wrapper) {
 		ret = -ENOMEM;
 		goto copy_from_user_failed;
 	}
+
+	msg = &wrapper->msg;
 
 	ret = encode_message(qdev, user_msg, msg, &resources);
 	if (ret)
@@ -626,7 +639,7 @@ int qaic_manage_ioctl(struct qaic_device *qdev, struct qaic_user *usr,
 	msg->hdr.handle = cpu_to_le32(usr->handle);
 
 	/* msg_xfer releases the mutex */
-	rsp = msg_xfer(qdev, msg, sizeof(*msg), qdev->next_seq_num - 1);
+	rsp = msg_xfer(qdev, msg, sizeof(*msg), qdev->next_seq_num - 1, false);
 	if (IS_ERR(rsp)) {
 		ret = PTR_ERR(rsp);
 		goto lock_failed;
@@ -653,7 +666,7 @@ lock_failed:
 	free_dma_xfers(qdev, &resources);
 	free_dbc_buf(qdev, &resources);
 encode_failed:
-	kfree(msg);
+	kfree(wrapper);
 copy_from_user_failed:
 	kfree(user_msg);
 out:
@@ -663,6 +676,12 @@ out:
 void qaic_mhi_ul_xfer_cb(struct mhi_device *mhi_dev,
 			 struct mhi_result *mhi_result)
 {
+	struct _msg *msg = mhi_result->buf_addr;
+	struct wrapper_msg *wrapper = container_of(msg, struct wrapper_msg,
+						   msg);
+
+	if (wrapper->free_on_xmit)
+		kfree(wrapper);
 }
 
 void qaic_mhi_dl_xfer_cb(struct mhi_device *mhi_dev,
@@ -714,4 +733,41 @@ int qaic_control_open(struct qaic_device *qdev)
 void qaic_control_close(struct qaic_device *qdev)
 {
 	mhi_unprepare_from_transfer(qdev->cntl_ch);
+}
+
+void qaic_release_usr(struct qaic_device *qdev, struct qaic_user *usr)
+{
+	struct wrapper_msg *wrapper;
+	struct _msg *msg;
+	struct _trans_terminate_to_dev *trans;
+
+	wrapper = kzalloc(sizeof(*wrapper), GFP_KERNEL);
+	if (!wrapper)
+		return;
+
+	/* MHI callback will free the memory once the xfer is complete */
+	wrapper->free_on_xmit = true;
+	msg = &wrapper->msg;
+
+	trans = (struct _trans_terminate_to_dev *)msg->data;
+
+	trans->hdr.type = cpu_to_le32(TRANS_TERMINATE_TO_DEV);
+	trans->hdr.len = cpu_to_le32(sizeof(*trans));
+	trans->handle = cpu_to_le32(usr->handle);
+
+	mutex_lock(&qdev->cntl_mutex);
+	msg->hdr.magic_number = MANAGE_MAGIC_NUMBER;
+	msg->hdr.sequence_number = cpu_to_le32(qdev->next_seq_num++);
+	msg->hdr.len = cpu_to_le32(sizeof(msg->hdr) + sizeof(*trans));
+	msg->hdr.count = cpu_to_le32(1);
+	msg->hdr.handle = cpu_to_le32(usr->handle);
+
+	/*
+	 * msg_xfer releases the mutex
+	 * Use the nowait option since we don't care about the response.
+	 * If the terminate operation fails, we have no additional recourse
+	 * other than to reset the device, which could disrupt other clients.
+	 * By ignoring the response, we can unblock this client faster.
+	 */
+	msg_xfer(qdev, msg, sizeof(*msg), qdev->next_seq_num - 1, true);
 }

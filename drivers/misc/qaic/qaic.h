@@ -73,4 +73,5 @@ void qaic_mhi_dl_xfer_cb(struct mhi_device *mhi_dev,
 
 int qaic_control_open(struct qaic_device *qdev);
 void qaic_control_close(struct qaic_device *qdev);
+void qaic_release_usr(struct qaic_device *qdev, struct qaic_user *usr);
 #endif /* QAICINTERNAL_H_ */
