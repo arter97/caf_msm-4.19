@@ -11,6 +11,7 @@
 #include <linux/mhi.h>
 #include <linux/mutex.h>
 #include <linux/pci.h>
+#include <linux/spinlock.h>
 
 #define QAIC_NUM_DBC		16
 #define QAIC_DBC_REQ_ELEM_SIZE	0x40
@@ -26,6 +27,8 @@ struct qaic_user {
 };
 
 struct dma_bridge_chan {
+	struct qaic_device	*qdev;
+	unsigned int		id;
 	/* also the base of the entire memory allocation */
 	void			*req_q_base;
 	void			*rsp_q_base;
@@ -37,7 +40,8 @@ struct dma_bridge_chan {
 	struct qaic_user	*usr;
 	u16			next_req_id;
 	void __iomem		*dbc_base;
-	struct mutex		xfer_lock;
+	spinlock_t		xfer_lock;
+	struct list_head	xfer_list;
 };
 
 struct qaic_device {
@@ -62,6 +66,8 @@ int qaic_mem_ioctl(struct qaic_device *qdev, struct qaic_user *usr,
 		   unsigned long arg);
 int qaic_execute_ioctl(struct qaic_device *qdev, struct qaic_user *usr,
 		       unsigned long arg);
+int qaic_wait_exec_ioctl(struct qaic_device *qdev, struct qaic_user *usr,
+			 unsigned long arg);
 int qaic_data_mmap(struct qaic_device *qdev, struct qaic_user *usr,
 		   struct vm_area_struct *vma);
 
@@ -74,4 +80,6 @@ void qaic_mhi_dl_xfer_cb(struct mhi_device *mhi_dev,
 int qaic_control_open(struct qaic_device *qdev);
 void qaic_control_close(struct qaic_device *qdev);
 void qaic_release_usr(struct qaic_device *qdev, struct qaic_user *usr);
+
+irqreturn_t dbc_irq_handler(int irq, void *data);
 #endif /* QAICINTERNAL_H_ */

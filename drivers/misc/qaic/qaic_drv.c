@@ -10,6 +10,7 @@
 #include <linux/module.h>
 #include <linux/mutex.h>
 #include <linux/pci.h>
+#include <linux/spinlock.h>
 #include <uapi/misc/qaic.h>
 
 #include "mhi_controller.h"
@@ -120,6 +121,14 @@ static long qaic_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 			break;
 		}
 		ret = qaic_execute_ioctl(qdev, usr, arg);
+		break;
+	case QAIC_IOCTL_WAIT_EXEC_NR:
+		if (_IOC_DIR(cmd) != _IOC_WRITE ||
+		    _IOC_SIZE(cmd) != sizeof(struct wait_exec)) {
+			ret = -EINVAL;
+			break;
+		}
+		ret = qaic_wait_exec_ioctl(qdev, usr, arg);
 		break;
 	default:
 		return -ENOTTY;
@@ -257,8 +266,11 @@ static int qaic_pci_probe(struct pci_dev *pdev,
 	INIT_LIST_HEAD(&qdev->cntl_xfer_list);
 	for (i = 0; i < QAIC_NUM_DBC; ++i) {
 		mutex_init(&qdev->dbc[i].mem_lock);
-		mutex_init(&qdev->dbc[i].xfer_lock);
+		spin_lock_init(&qdev->dbc[i].xfer_lock);
 		idr_init(&qdev->dbc[i].mem_handles);
+		qdev->dbc[i].qdev = qdev;
+		qdev->dbc[i].id = i;
+		INIT_LIST_HEAD(&qdev->dbc[i].xfer_list);
 	}
 
 	qdev->bars = pci_select_bars(pdev, IORESOURCE_MEM);
@@ -315,6 +327,14 @@ static int qaic_pci_probe(struct pci_dev *pdev,
 		goto get_mhi_irq_fail;
 	}
 
+	for (i = 0; i < QAIC_NUM_DBC; ++i) {
+		ret = devm_request_irq(&pdev->dev, pci_irq_vector(pdev, i + 1),
+				       dbc_irq_handler, IRQF_SHARED, "qaic_dbc",
+				       &qdev->dbc[i]);
+		if (ret)
+			goto get_dbc_irq_failed;
+	}
+
 	qdev->mhi_cntl = qaic_mhi_register_controller(pdev, qdev->bar_0, mhi_irq);
 	if (IS_ERR(qdev->mhi_cntl)) {
 		ret = PTR_ERR(qdev->mhi_cntl);
@@ -325,6 +345,7 @@ static int qaic_pci_probe(struct pci_dev *pdev,
 	return 0;
 
 mhi_register_fail:
+get_dbc_irq_failed:
 get_mhi_irq_fail:
 	pci_free_irq_vectors(pdev);
 alloc_irq_fail:
@@ -348,12 +369,16 @@ qdev_fail:
 static void qaic_pci_remove(struct pci_dev *pdev)
 {
 	struct qaic_device *qdev = pci_get_drvdata(pdev);
+	int i;
 
 	pci_dbg(pdev, "%s\n", __func__);
 	if (!qdev)
 		return;
 
 	qaic_mhi_free_controller(qdev->mhi_cntl);
+	for (i = 0; i < QAIC_NUM_DBC; ++i)
+		devm_free_irq(&pdev->dev, pci_irq_vector(pdev, i + 1),
+			      &qdev->dbc[i]);
 	pci_free_irq_vectors(pdev);
 	iounmap(qdev->bar_0);
 	pci_clear_master(pdev);

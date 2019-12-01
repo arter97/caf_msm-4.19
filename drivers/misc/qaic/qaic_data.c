@@ -2,9 +2,12 @@
 
 /* Copyright (c) 2019, The Linux Foundation. All rights reserved. */
 
+#include <linux/completion.h>
 #include <linux/dma-mapping.h>
 #include <linux/idr.h>
+#include <linux/list.h>
 #include <linux/scatterlist.h>
+#include <linux/spinlock.h>
 #include <linux/types.h>
 #include <linux/uaccess.h>
 #include <uapi/misc/qaic.h>
@@ -53,11 +56,19 @@ struct dbc_req { /* everything must be little endian encoded */
 	u32	sem_cmd3;
 } __packed;
 
+struct dbc_rsp { /* everything must be little endian encoded */
+	u16	req_id;
+	u16	status;
+} __packed;
+
 struct mem_handle {
-	struct sg_table	*sgt;  /* Mapped pages */
-	int		nents; /* number of dma mapped elements in sgt */
-	int		dir;   /* DMA_BIDIRECTIONAL/TO_DEVICE/FROM_DEVICE */
-	struct dbc_req	*reqs;
+	struct sg_table		*sgt;  /* Mapped pages */
+	int			nents; /* num dma mapped elements in sgt */
+	int			dir;   /* see enum dma_data_direction */
+	struct dbc_req		*reqs;
+	struct list_head	list;
+	u16			req_id;/* req_id for the xfer while in flight */
+	struct completion	xfer_done;
 };
 
 static int alloc_handle(struct qaic_device *qdev, struct mem_req *req)
@@ -431,6 +442,8 @@ static int commit_execute(struct qaic_device *qdev, struct mem_handle *mem,
 		       reqs, sizeof(*reqs) * mem->nents);
 	}
 
+	init_completion(&mem->xfer_done);
+	list_add_tail(&mem->list, &dbc->xfer_list);
 	tail = (tail + mem->nents) % dbc->nelem;
 	__raw_writel(cpu_to_le32(tail), dbc->dbc_base + REQTP_OFF);
 	return 0;
@@ -441,6 +454,7 @@ int qaic_execute_ioctl(struct qaic_device *qdev, struct qaic_user *usr,
 {
 	struct mem_handle *mem;
 	struct execute *exec;
+	unsigned long flags;
 	u16 req_id;
 	int handle;
 	int dbc_id;
@@ -501,9 +515,10 @@ int qaic_execute_ioctl(struct qaic_device *qdev, struct qaic_user *usr,
 		goto free_exec;
 	}
 
-	mutex_lock(&qdev->dbc[exec->dbc_id].xfer_lock);
+	spin_lock_irqsave(&qdev->dbc[exec->dbc_id].xfer_lock, flags);
 	req_id = qdev->dbc[exec->dbc_id].next_req_id++;
-	mutex_unlock(&qdev->dbc[exec->dbc_id].xfer_lock);
+	spin_unlock_irqrestore(&qdev->dbc[exec->dbc_id].xfer_lock, flags);
+	mem->req_id = req_id;
 
 	ret = encode_execute(qdev, mem, exec, req_id);
 	if (ret)
@@ -512,9 +527,9 @@ int qaic_execute_ioctl(struct qaic_device *qdev, struct qaic_user *usr,
 	dma_sync_sg_for_device(&qdev->pdev->dev, mem->sgt->sgl, mem->sgt->nents,
 			       mem->dir);
 
-	mutex_lock(&qdev->dbc[exec->dbc_id].xfer_lock);
+	spin_lock_irqsave(&qdev->dbc[exec->dbc_id].xfer_lock, flags);
 	ret = commit_execute(qdev, mem, exec->dbc_id);
-	mutex_unlock(&qdev->dbc[exec->dbc_id].xfer_lock);
+	spin_unlock_irqrestore(&qdev->dbc[exec->dbc_id].xfer_lock, flags);
 	if (ret)
 		goto sync_to_cpu;
 
@@ -525,6 +540,121 @@ sync_to_cpu:
 			    mem->dir);
 free_exec:
 	kfree(exec);
+out:
+	return ret;
+}
+
+irqreturn_t dbc_irq_handler(int irq, void *data)
+{
+	struct dma_bridge_chan *dbc = data;
+	struct qaic_device *qdev = dbc->qdev;
+	struct mem_handle *mem;
+	struct mem_handle *i;
+	struct dbc_rsp *rsp;
+	unsigned long flags;
+	u16 status;
+	u16 req_id;
+	u32 head;
+	u32 tail;
+
+read_fifo:
+	/*
+	 * if this channel isn't assigned or gets unassigned during processing
+	 * we have nothing further to do
+	 */
+	if (!dbc->usr)
+		return IRQ_HANDLED;
+
+	head = le32_to_cpu(__raw_readl(dbc->dbc_base + RSPHP_OFF));
+	tail = le32_to_cpu(__raw_readl(dbc->dbc_base + RSPTP_OFF));
+
+	if (head == tail) /* queue empty */
+		return IRQ_HANDLED;
+
+	while (head != tail) {
+		rsp = dbc->rsp_q_base + head * sizeof(*rsp);
+		req_id = le16_to_cpu(rsp->req_id);
+		status = le16_to_cpu(rsp->status);
+		if (status)
+			pci_dbg(qdev->pdev, "req_id %d failed with status %d\n",
+				req_id, status);
+		spin_lock_irqsave(&dbc->xfer_lock, flags);
+		list_for_each_entry_safe(mem, i, &dbc->xfer_list, list) {
+			if (mem->req_id == req_id) {
+				list_del(&mem->list);
+				dma_sync_sg_for_cpu(&qdev->pdev->dev,
+						    mem->sgt->sgl,
+						    mem->sgt->nents,
+						    mem->dir);
+				complete_all(&mem->xfer_done);
+				break;
+			}
+		}
+		spin_unlock_irqrestore(&dbc->xfer_lock, flags);
+		head = (head + 1) % dbc->nelem;
+		__raw_writel(cpu_to_le32(head), dbc->dbc_base + RSPHP_OFF);
+	}
+
+	/* elements might have been put in the queue while we were processing */
+	goto read_fifo;
+}
+
+int qaic_wait_exec_ioctl(struct qaic_device *qdev, struct qaic_user *usr,
+			 unsigned long arg)
+{
+	struct mem_handle *mem;
+	struct wait_exec *wait;
+	int handle;
+	int dbc_id;
+	int ret;
+
+	wait = kmalloc(sizeof(*wait), GFP_KERNEL);
+	if (!wait) {
+		ret = -ENOMEM;
+		goto out;
+	}
+
+	if (copy_from_user(wait, (void __user *)arg, sizeof(*wait))) {
+		ret = -EFAULT;
+		goto free_wait;
+	}
+
+	handle = wait->handle & ~PGOFF_DBC_MASK;
+	dbc_id = (wait->handle & PGOFF_DBC_MASK) >> PGOFF_DBC_SHIFT;
+
+	/* we shifted up by PAGE_SHIFT to make mmap happy, need to undo that */
+	handle >>= PAGE_SHIFT;
+	dbc_id >>= PAGE_SHIFT;
+
+	if (dbc_id > QAIC_NUM_DBC) {
+		ret = -EINVAL;
+		goto free_wait;
+	}
+
+	if (!qdev->dbc[dbc_id].usr ||
+	    qdev->dbc[dbc_id].usr->handle != usr->handle) {
+		ret = -EPERM;
+		goto free_wait;
+	}
+
+	ret = mutex_lock_interruptible(&qdev->dbc[dbc_id].mem_lock);
+	if (ret)
+		goto free_wait;
+	mem = idr_find(&qdev->dbc[dbc_id].mem_handles, handle);
+	mutex_unlock(&qdev->dbc[dbc_id].mem_lock);
+	if (!mem) {
+		ret = -ENODEV;
+		goto free_wait;
+	}
+
+	ret = wait_for_completion_interruptible_timeout(&mem->xfer_done, 5 * HZ);
+	if (!ret)
+		ret = -ETIMEDOUT;
+	else if (ret > 0)
+		ret = 0;
+
+free_wait:
+	kfree(wait);
 out:
 	return ret;
 }

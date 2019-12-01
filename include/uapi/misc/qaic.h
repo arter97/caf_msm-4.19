@@ -120,9 +120,14 @@ struct execute {
 	struct sem	sem3;   /* Must be zero if not valid */
 };
 
+struct wait_exec {
+	__u64 handle; /* handle to wait on until execute is complete */
+};
+
 #define QAIC_IOCTL_MANAGE_NR	0x01
 #define QAIC_IOCTL_MEM_NR	0x02
 #define QAIC_IOCTL_EXECUTE_NR	0x03
+#define QAIC_IOCTL_WAIT_EXEC_NR	0x04
 
 /*
  * Send Manage command to the device
@@ -194,5 +199,11 @@ struct execute {
  * ENODEV - Resource does not exist
  */
 #define QAIC_IOCTL_EXECUTE _IOW('Q', QAIC_IOCTL_EXECUTE_NR, struct execute)
+
+/*
+ * TODO writeup
+ */
+#define QAIC_IOCTL_WAIT_EXEC _IOW('Q', QAIC_IOCTL_WAIT_EXEC_NR,	\
+				  struct wait_exec)
 
 #endif /* QAIC_H_ */
