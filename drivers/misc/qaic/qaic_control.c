@@ -474,7 +474,7 @@ static int decode_activate(struct qaic_device *qdev, void *trans,
 
 	if (out_trans->dbc_id >= QAIC_NUM_DBC)
 		/*
-		 * The devide assigned an invalid resource, which should never
+		 * The device assigned an invalid resource, which should never
 		 * happen.  Inject an error so the user can try to recover.
 		 */
 		out_trans->status = -ENODEV;
