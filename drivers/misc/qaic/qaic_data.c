@@ -77,6 +77,7 @@ static int alloc_handle(struct qaic_device *qdev, struct mem_req *req)
 	struct scatterlist *sg;
 	struct sg_table *sgt;
 	struct page *page;
+	int buf_extra;
 	int max_order;
 	int nr_pages;
 	int order;
@@ -91,6 +92,8 @@ static int alloc_handle(struct qaic_device *qdev, struct mem_req *req)
 	}
 
 	nr_pages = DIV_ROUND_UP(req->size, PAGE_SIZE);
+	/* calculate how much extra we are going to allocate, to remove later */
+	buf_extra = (PAGE_SIZE - req->size % PAGE_SIZE) % PAGE_SIZE;
 
 	mem = kmalloc(sizeof(*mem), GFP_KERNEL);
 	if (!mem) {
@@ -140,6 +143,10 @@ static int alloc_handle(struct qaic_device *qdev, struct mem_req *req)
 		sgt->nents++;
 		nr_pages -= 1 << order;
 		if (!nr_pages) {
+			if (buf_extra)
+				sg_set_page(sg, page,
+					    (PAGE_SIZE << order) - buf_extra,
+					    0);
 			sg_mark_end(sg);
 			break;
 		}
