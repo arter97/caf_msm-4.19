@@ -79,6 +79,12 @@ struct manage_trans_activate_from_dev {
 	__u32 dbc_id; /* Identifier of assigned DMA Bridge channel */
 };
 
+struct manage_trans_deactivate {
+	struct manage_trans_hdr hdr;
+	__u32 dbc_id; /* Identifier of assigned DMA Bridge channel */
+	__u32 resv;   /* reserved for future use, must be 0 */
+};
+
 struct manage_msg {
 	__u32 len;   /* Length of valid data - ie sum of all transactions */
 	__u32 count; /* Number of transactions in message */

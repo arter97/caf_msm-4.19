@@ -81,6 +81,12 @@ struct _trans_activate_from_dev {
 	u32 dbc_id;
 } __packed;
 
+struct _trans_deactivate_from_dev {
+	struct _trans_hdr hdr;
+	u32 status;
+	u32 dbc_id;
+} __packed;
+
 struct _trans_terminate_to_dev {
 	struct _trans_hdr hdr;
 	u32 handle;
@@ -372,8 +378,22 @@ static int encode_activate(struct qaic_device *qdev, void *trans,
 	return 0;
 }
 
+static int encode_deactivate(struct qaic_device *qdev, void *trans,
+			     u32 *user_len, struct qaic_user *usr)
+{
+	struct manage_trans_deactivate *in_trans = trans;
+
+	if (in_trans->dbc_id >= QAIC_NUM_DBC || in_trans->resv)
+		return -EINVAL;
+
+	*user_len += in_trans->hdr.len;
+
+	return disable_dbc(qdev, in_trans->dbc_id, usr);
+}
+
 static int encode_message(struct qaic_device *qdev, struct manage_msg *user_msg,
-			  struct _msg *msg, struct ioctl_resources *resources)
+			  struct _msg *msg, struct ioctl_resources *resources,
+			  struct qaic_user *usr)
 {
 	struct manage_trans_hdr *trans_hdr;
 	u32 user_len = 0;
@@ -404,6 +424,10 @@ static int encode_message(struct qaic_device *qdev, struct manage_msg *user_msg,
 		case TRANS_ACTIVATE_FROM_USR:
 			ret = encode_activate(qdev, trans_hdr, msg, &user_len,
 					      resources);
+			break;
+		case TRANS_DEACTIVATE_FROM_USR:
+			ret = encode_deactivate(qdev, trans_hdr, &user_len,
+						usr);
 			break;
 		default:
 			ret = -EINVAL;
@@ -483,6 +507,33 @@ static int decode_activate(struct qaic_device *qdev, void *trans,
 	resources->dbc_id = out_trans->dbc_id;
 	return 0;
 }
+
+static int decode_deactivate(struct qaic_device *qdev, void *trans,
+			     u32 *msg_len)
+{
+	struct _trans_deactivate_from_dev *in_trans = trans;
+	u32 dbc_id = le32_to_cpu(in_trans->dbc_id);
+	u32 status = le32_to_cpu(in_trans->status);
+
+	if (dbc_id >= QAIC_NUM_DBC)
+		/*
+		 * The device assigned an invalid resource, which should never
+		 * happen.  Inject an error so the user can try to recover.
+		 */
+		return -ENODEV;
+	if (status)
+		/*
+		 * Releasing resources failed on the device side, which puts
+		 * us in a bind since they may still be in use, so be safe and
+		 * do nothing.
+		 */
+		return -ENODEV;
+
+	release_dbc(qdev, dbc_id);
+	*msg_len += sizeof(*in_trans);
+	return 0;
+}
+
 static int decode_message(struct qaic_device *qdev, struct manage_msg *user_msg,
 			  struct _msg *msg, struct ioctl_resources *resources)
 {
@@ -509,6 +560,9 @@ static int decode_message(struct qaic_device *qdev, struct manage_msg *user_msg,
 		case TRANS_ACTIVATE_FROM_DEV:
 			ret = decode_activate(qdev, trans_hdr, user_msg,
 					      &msg_len, resources);
+			break;
+		case TRANS_DEACTIVATE_FROM_DEV:
+			ret = decode_deactivate(qdev, trans_hdr, &msg_len);
 			break;
 		default:
 			return -EINVAL;
@@ -625,7 +679,7 @@ int qaic_manage_ioctl(struct qaic_device *qdev, struct qaic_user *usr,
 
 	msg = &wrapper->msg;
 
-	ret = encode_message(qdev, user_msg, msg, &resources);
+	ret = encode_message(qdev, user_msg, msg, &resources, usr);
 	if (ret)
 		goto encode_failed;
 

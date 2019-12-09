@@ -271,6 +271,7 @@ static int qaic_pci_probe(struct pci_dev *pdev,
 		qdev->dbc[i].qdev = qdev;
 		qdev->dbc[i].id = i;
 		INIT_LIST_HEAD(&qdev->dbc[i].xfer_list);
+		init_srcu_struct(&qdev->dbc[i].ch_lock);
 	}
 
 	qdev->bars = pci_select_bars(pdev, IORESOURCE_MEM);
@@ -376,9 +377,11 @@ static void qaic_pci_remove(struct pci_dev *pdev)
 		return;
 
 	qaic_mhi_free_controller(qdev->mhi_cntl);
-	for (i = 0; i < QAIC_NUM_DBC; ++i)
+	for (i = 0; i < QAIC_NUM_DBC; ++i) {
 		devm_free_irq(&pdev->dev, pci_irq_vector(pdev, i + 1),
 			      &qdev->dbc[i]);
+		cleanup_srcu_struct(&qdev->dbc[i].ch_lock);
+	}
 	pci_free_irq_vectors(pdev);
 	iounmap(qdev->bar_0);
 	pci_clear_master(pdev);

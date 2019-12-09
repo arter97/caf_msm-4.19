@@ -12,6 +12,7 @@
 #include <linux/mutex.h>
 #include <linux/pci.h>
 #include <linux/spinlock.h>
+#include <linux/srcu.h>
 
 #define QAIC_NUM_DBC		16
 #define QAIC_DBC_REQ_ELEM_SIZE	0x40
@@ -42,6 +43,7 @@ struct dma_bridge_chan {
 	void __iomem		*dbc_base;
 	spinlock_t		xfer_lock;
 	struct list_head	xfer_list;
+	struct srcu_struct	ch_lock;
 };
 
 struct qaic_device {
@@ -82,4 +84,6 @@ void qaic_control_close(struct qaic_device *qdev);
 void qaic_release_usr(struct qaic_device *qdev, struct qaic_user *usr);
 
 irqreturn_t dbc_irq_handler(int irq, void *data);
+int disable_dbc(struct qaic_device *qdev, u32 dbc_id, struct qaic_user *usr);
+void release_dbc(struct qaic_device *qdev, u32 dbc_id);
 #endif /* QAICINTERNAL_H_ */
