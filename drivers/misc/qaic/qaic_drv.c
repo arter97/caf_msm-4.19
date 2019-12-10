@@ -365,6 +365,8 @@ request_regions_fail:
 enable_fail:
 	pci_set_drvdata(pdev, NULL);
 bar_fail:
+	for (i = 0; i < QAIC_NUM_DBC; ++i)
+		cleanup_srcu_struct(&qdev->dbc[i].ch_lock);
 	kfree(qdev);
 qdev_fail:
 	return ret;
@@ -486,4 +488,4 @@ module_exit(qaic_exit);
 
 MODULE_DESCRIPTION("QTI Cloud AI Accelerators Driver");
 MODULE_LICENSE("GPL v2");
-MODULE_VERSION("1.0.1"); /* MAJOR.MINOR.PATCH */
+MODULE_VERSION("1.0.2"); /* MAJOR.MINOR.PATCH */
