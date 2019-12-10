@@ -347,6 +347,9 @@ static int qaic_pci_probe(struct pci_dev *pdev,
 
 mhi_register_fail:
 get_dbc_irq_failed:
+	for (i = 0; i < QAIC_NUM_DBC; ++i)
+		devm_free_irq(&pdev->dev, pci_irq_vector(pdev, i + 1),
+			      &qdev->dbc[i]);
 get_mhi_irq_fail:
 	pci_free_irq_vectors(pdev);
 alloc_irq_fail:
@@ -483,4 +486,4 @@ module_exit(qaic_exit);
 
 MODULE_DESCRIPTION("QTI Cloud AI Accelerators Driver");
 MODULE_LICENSE("GPL v2");
-MODULE_VERSION("1.0.0"); /* MAJOR.MINOR.PATCH */
+MODULE_VERSION("1.0.1"); /* MAJOR.MINOR.PATCH */
