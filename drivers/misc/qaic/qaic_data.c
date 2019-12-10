@@ -73,6 +73,7 @@ struct mem_handle {
 	struct completion	xfer_done;
 	struct kref		ref_count;
 	struct qaic_device	*qdev;
+	bool			queued;
 };
 
 static int alloc_handle(struct qaic_device *qdev, struct mem_req *req)
@@ -177,6 +178,7 @@ static int alloc_handle(struct qaic_device *qdev, struct mem_req *req)
 	mem->nents = nents;
 	mem->dir = req->dir;
 	mem->qdev = qdev;
+	mem->queued = false;
 
 	ret = mutex_lock_interruptible(&qdev->dbc[req->dbc_id].mem_lock);
 	if (ret)
@@ -234,6 +236,7 @@ static void free_handle_mem(struct kref *kref)
 static int free_handle(struct qaic_device *qdev, struct mem_req *req)
 {
 	struct mem_handle *mem;
+	unsigned long flags;
 	int handle;
 	int dbc_id;
 	int ret;
@@ -251,12 +254,21 @@ static int free_handle(struct qaic_device *qdev, struct mem_req *req)
 	ret = mutex_lock_interruptible(&qdev->dbc[dbc_id].mem_lock);
 	if (ret)
 		goto lock_fail;
-	mem = idr_remove(&qdev->dbc[dbc_id].mem_handles, handle);
-	mutex_unlock(&qdev->dbc[dbc_id].mem_lock);
-	if (!mem) {
+	mem = idr_find(&qdev->dbc[dbc_id].mem_handles, handle);
+	if (mem) {
+		spin_lock_irqsave(&qdev->dbc[dbc_id].xfer_lock, flags);
+		if (mem->queued)
+			ret = -EINVAL;
+		else
+			mem = idr_remove(&qdev->dbc[dbc_id].mem_handles,
+					 handle);
+		spin_unlock_irqrestore(&qdev->dbc[dbc_id].xfer_lock, flags);
+	} else {
 		ret = -ENODEV;
-		goto lock_fail;
 	}
+	mutex_unlock(&qdev->dbc[dbc_id].mem_lock);
+	if (ret)
+		goto lock_fail;
 
 	kref_put(&mem->ref_count, free_handle_mem);
 
@@ -492,6 +504,7 @@ int qaic_execute_ioctl(struct qaic_device *qdev, struct qaic_user *usr,
 	struct mem_handle *mem;
 	struct execute *exec;
 	unsigned long flags;
+	bool queued;
 	u16 req_id;
 	int handle;
 	int dbc_id;
@@ -556,12 +569,21 @@ int qaic_execute_ioctl(struct qaic_device *qdev, struct qaic_user *usr,
 
 	spin_lock_irqsave(&qdev->dbc[exec->dbc_id].xfer_lock, flags);
 	req_id = qdev->dbc[exec->dbc_id].next_req_id++;
+	queued = mem->queued;
+	mem->queued = true;
 	spin_unlock_irqrestore(&qdev->dbc[exec->dbc_id].xfer_lock, flags);
 	mem->req_id = req_id;
 
-	ret = encode_execute(qdev, mem, exec, req_id);
-	if (ret)
+	if (queued) {
+		ret = -EINVAL;
 		goto release_rcu;
+	}
+
+	ret = encode_execute(qdev, mem, exec, req_id);
+	if (ret) {
+		mem->queued = false;
+		goto release_rcu;
+	}
 
 	dma_sync_sg_for_device(&qdev->pdev->dev, mem->sgt->sgl, mem->sgt->nents,
 			       mem->dir);
@@ -569,8 +591,10 @@ int qaic_execute_ioctl(struct qaic_device *qdev, struct qaic_user *usr,
 	spin_lock_irqsave(&qdev->dbc[exec->dbc_id].xfer_lock, flags);
 	ret = commit_execute(qdev, mem, exec->dbc_id);
 	spin_unlock_irqrestore(&qdev->dbc[exec->dbc_id].xfer_lock, flags);
-	if (ret)
+	if (ret) {
+		mem->queued = false;
 		goto sync_to_cpu;
+	}
 
 	goto release_rcu;
 
@@ -633,6 +657,7 @@ read_fifo:
 						    mem->sgt->sgl,
 						    mem->sgt->nents,
 						    mem->dir);
+				mem->queued = false;
 				complete_all(&mem->xfer_done);
 				break;
 			}
