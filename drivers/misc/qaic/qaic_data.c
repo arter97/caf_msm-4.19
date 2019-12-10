@@ -556,14 +556,18 @@ int qaic_execute_ioctl(struct qaic_device *qdev, struct qaic_user *usr,
 	if (ret)
 		goto release_rcu;
 	mem = idr_find(&qdev->dbc[exec->dbc_id].mem_handles, handle);
-	mutex_unlock(&qdev->dbc[exec->dbc_id].mem_lock);
 	if (!mem) {
 		ret = -ENODEV;
+		mutex_unlock(&qdev->dbc[exec->dbc_id].mem_lock);
 		goto release_rcu;
 	}
+	/* prevent free_handle from taking the memory from under us */
+	kref_get(&mem->ref_count);
+	mutex_unlock(&qdev->dbc[exec->dbc_id].mem_lock);
 
 	if (mem->dir != DMA_BIDIRECTIONAL && mem->dir != exec->dir) {
 		ret = -EINVAL;
+		kref_put(&mem->ref_count, free_handle_mem);
 		goto release_rcu;
 	}
 
@@ -576,12 +580,14 @@ int qaic_execute_ioctl(struct qaic_device *qdev, struct qaic_user *usr,
 
 	if (queued) {
 		ret = -EINVAL;
+		kref_put(&mem->ref_count, free_handle_mem);
 		goto release_rcu;
 	}
 
 	ret = encode_execute(qdev, mem, exec, req_id);
 	if (ret) {
 		mem->queued = false;
+		kref_put(&mem->ref_count, free_handle_mem);
 		goto release_rcu;
 	}
 
@@ -593,6 +599,7 @@ int qaic_execute_ioctl(struct qaic_device *qdev, struct qaic_user *usr,
 	spin_unlock_irqrestore(&qdev->dbc[exec->dbc_id].xfer_lock, flags);
 	if (ret) {
 		mem->queued = false;
+		kref_put(&mem->ref_count, free_handle_mem);
 		goto sync_to_cpu;
 	}
 
@@ -658,6 +665,7 @@ read_fifo:
 						    mem->sgt->nents,
 						    mem->dir);
 				mem->queued = false;
+				kref_put(&mem->ref_count, free_handle_mem);
 				complete_all(&mem->xfer_done);
 				break;
 			}
@@ -781,5 +789,10 @@ void release_dbc(struct qaic_device *qdev, u32 dbc_id)
 			break;
 		idr_remove(&qdev->dbc[dbc_id].mem_handles, next_id);
 		kref_put(&mem->ref_count, free_handle_mem);
+		/* account for the missing put from the irq handler */
+		if (mem->queued) {
+			mem->queued = false;
+			kref_put(&mem->ref_count, free_handle_mem);
+		}
 	}
 }
