@@ -422,12 +422,21 @@ static int encode_execute(struct qaic_device *qdev, struct mem_handle *mem,
 	u32 db_data = cpu_to_le32(exec->db_data);
 	struct scatterlist *sg;
 	u64 dev_addr;
+	int presync_sem;
 	int i;
 
 	req_id = cpu_to_le16(req_id);
 
 	if (exec->db_len && !IS_ALIGNED(exec->db_addr, exec->db_len / 8))
 		return -EINVAL;
+
+	presync_sem = exec->sem0.presync + exec->sem1.presync +
+		      exec->sem2.presync + exec->sem3.presync;
+	if (presync_sem > 1)
+		return -EINVAL;
+
+	presync_sem = exec->sem0.presync << 0 | exec->sem1.presync << 1 |
+		      exec->sem2.presync << 2 | exec->sem3.presync << 3;
 
 	switch (exec->db_len) {
 	case 32:
@@ -446,13 +455,19 @@ static int encode_execute(struct qaic_device *qdev, struct mem_handle *mem,
 		return -EINVAL; /* should never hit this */
 	}
 
+	/*
+	 * When we end up splitting up a single request (ie a mem handle) into
+	 * multiple DMA requests, we have to manage the sync data carefully.
+	 * There can only be one presync sem.  That needs to be on every xfer
+	 * so that the DMA engine doesn't transfer data before the receiver is
+	 * ready.  We only do the doorbell and postsync sems after the xfer.
+	 * To guarantee previous xfers for the request are complete, we use a
+	 * fence.
+	 */
 	dev_addr = exec->dev_addr;
 	for_each_sg(mem->sgt->sgl, sg, mem->nents, i) {
 		mem->reqs[i].req_id = req_id;
 		mem->reqs[i].cmd = cmd;
-		mem->reqs[i].db_addr = db_addr;
-		mem->reqs[i].db_len = db_len;
-		mem->reqs[i].db_data = db_data;
 		mem->reqs[i].src_addr =
 			cpu_to_le64(exec->dir == DMA_TO_DEVICE ?
 					sg_dma_address(sg) : dev_addr);
@@ -460,28 +475,69 @@ static int encode_execute(struct qaic_device *qdev, struct mem_handle *mem,
 			cpu_to_le64(exec->dir == DMA_TO_DEVICE ?
 					dev_addr : sg_dma_address(sg));
 		mem->reqs[i].len = cpu_to_le32(sg_dma_len(sg));
-		mem->reqs[i].sem_cmd0 = cpu_to_le32(ENCODE_SEM(exec->sem0.val,
+		switch (presync_sem) {
+		case BIT(0):
+			mem->reqs[i].sem_cmd0 = cpu_to_le32(
+						ENCODE_SEM(exec->sem0.val,
 							exec->sem0.index,
 							exec->sem0.presync,
 							exec->sem0.cmd,
 							exec->sem0.flags));
-		mem->reqs[i].sem_cmd1 = cpu_to_le32(ENCODE_SEM(exec->sem1.val,
+			break;
+		case BIT(1):
+			mem->reqs[i].sem_cmd1 = cpu_to_le32(
+						ENCODE_SEM(exec->sem1.val,
 							exec->sem1.index,
 							exec->sem1.presync,
 							exec->sem1.cmd,
 							exec->sem1.flags));
-		mem->reqs[i].sem_cmd2 = cpu_to_le32(ENCODE_SEM(exec->sem2.val,
+			break;
+		case BIT(2):
+			mem->reqs[i].sem_cmd2 = cpu_to_le32(
+						ENCODE_SEM(exec->sem2.val,
 							exec->sem2.index,
 							exec->sem2.presync,
 							exec->sem2.cmd,
 							exec->sem2.flags));
-		mem->reqs[i].sem_cmd3 = cpu_to_le32(ENCODE_SEM(exec->sem3.val,
+			break;
+		case BIT(3):
+			mem->reqs[i].sem_cmd3 = cpu_to_le32(
+						ENCODE_SEM(exec->sem3.val,
 							exec->sem3.index,
 							exec->sem3.presync,
 							exec->sem3.cmd,
 							exec->sem3.flags));
+			break;
+		}
 		dev_addr += sg_dma_len(sg);
 	}
+	/* add post transfer stuff to last segment */
+	i--;
+	mem->reqs[i].db_addr = db_addr;
+	mem->reqs[i].db_len = db_len;
+	mem->reqs[i].db_data = db_data;
+	exec->sem0.flags |= (exec->dir == DMA_TO_DEVICE ? SEM_INSYNCFENCE :
+							SEM_OUTSYNCFENCE);
+	mem->reqs[i].sem_cmd0 = cpu_to_le32(ENCODE_SEM(exec->sem0.val,
+						       exec->sem0.index,
+						       exec->sem0.presync,
+						       exec->sem0.cmd,
+						       exec->sem0.flags));
+	mem->reqs[i].sem_cmd1 = cpu_to_le32(ENCODE_SEM(exec->sem1.val,
+						       exec->sem1.index,
+						       exec->sem1.presync,
+						       exec->sem1.cmd,
+						       exec->sem1.flags));
+	mem->reqs[i].sem_cmd2 = cpu_to_le32(ENCODE_SEM(exec->sem2.val,
+						       exec->sem2.index,
+						       exec->sem2.presync,
+						       exec->sem2.cmd,
+						       exec->sem2.flags));
+	mem->reqs[i].sem_cmd3 = cpu_to_le32(ENCODE_SEM(exec->sem3.val,
+						       exec->sem3.index,
+						       exec->sem3.presync,
+						       exec->sem3.cmd,
+						       exec->sem3.flags));
 
 	return 0;
 }
