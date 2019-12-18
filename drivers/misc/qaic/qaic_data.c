@@ -76,6 +76,25 @@ struct mem_handle {
 	bool			queued;
 };
 
+static int reserve_pages(unsigned long start_pfn, unsigned long nr_pages,
+			 bool reserve)
+{
+	unsigned long pfn;
+	unsigned long end_pfn = start_pfn + nr_pages;
+	struct page *page;
+
+	for (pfn = start_pfn; pfn < end_pfn; pfn++) {
+		if (!pfn_valid(pfn))
+			return -EINVAL;
+		page =  pfn_to_page(pfn);
+		if (reserve)
+			SetPageReserved(page);
+		else
+			ClearPageReserved(page);
+	}
+	return 0;
+}
+
 static int alloc_handle(struct qaic_device *qdev, struct mem_req *req)
 {
 	struct mem_handle *mem;
@@ -144,6 +163,9 @@ static int alloc_handle(struct qaic_device *qdev, struct mem_req *req)
 			max_order = order;
 		}
 
+		if (reserve_pages(page_to_pfn(page), 1 << order, true))
+			goto free_partial_alloc;
+
 		sg_set_page(sg, page, PAGE_SIZE << order, 0);
 		sgt->nents++;
 		nr_pages -= 1 << order;
@@ -206,8 +228,11 @@ req_alloc_fail:
 	dma_unmap_sg(&qdev->pdev->dev, sgt->sgl, sgt->nents, req->dir);
 free_partial_alloc:
 	for (sg = sgt->sgl; sg; sg = sg_next(sg))
-		if (sg_page(sg))
+		if (sg_page(sg)) {
+			reserve_pages(page_to_pfn(sg_page(sg)),
+				      sg->length/PAGE_SIZE, false);
 			__free_pages(sg_page(sg), get_order(sg->length));
+		}
 free_sgt:
 	kfree(sgt);
 free_mem:
@@ -226,8 +251,11 @@ static void free_handle_mem(struct kref *kref)
 	sgt = mem->sgt;
 	dma_unmap_sg(&mem->qdev->pdev->dev, sgt->sgl, sgt->nents, mem->dir);
 	for (sg = sgt->sgl; sg; sg = sg_next(sg))
-		if (sg_page(sg))
+		if (sg_page(sg)) {
+			reserve_pages(page_to_pfn(sg_page(sg)),
+				      sg->length/PAGE_SIZE, false);
 			__free_pages(sg_page(sg), get_order(sg->length));
+	}
 	kfree(sgt);
 	kfree(mem->reqs);
 	kfree(mem);
@@ -358,8 +386,9 @@ int qaic_data_mmap(struct qaic_device *qdev, struct qaic_user *usr,
 
 	for (sg = mem->sgt->sgl; sg; sg = sg_next(sg)) {
 		if (sg_page(sg)) {
-			ret = vm_insert_page(vma, vma->vm_start + offset,
-					     sg_page(sg));
+			ret = remap_pfn_range(vma, vma->vm_start + offset,
+					      page_to_pfn(sg_page(sg)),
+					      sg->length, vma->vm_page_prot);
 			if (ret)
 				goto release_rcu;
 			offset += sg->length;
