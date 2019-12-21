@@ -11,6 +11,7 @@
 #include <linux/mutex.h>
 #include <linux/pci.h>
 #include <linux/spinlock.h>
+#include <linux/workqueue.h>
 #include <uapi/misc/qaic.h>
 
 #include "mhi_controller.h"
@@ -244,6 +245,27 @@ static void qaic_mhi_remove(struct mhi_device *mhi_dev)
 	mutex_unlock(&qaic_devs_lock);
 }
 
+static void reset_work_func(struct work_struct *work)
+{
+	struct qaic_device *qdev;
+	int ret;
+
+	qdev = container_of(work, struct qaic_device, reset_work);
+
+	ret = pci_reset_function(qdev->pdev);
+	if (ret < 0)
+		pci_err(qdev->pdev, "Failed to reset device from device signal\n");
+}
+
+static irqreturn_t reset_irq_handler(int irq, void *data)
+{
+	struct qaic_device *qdev = data;
+
+	schedule_work(&qdev->reset_work);
+
+	return IRQ_HANDLED;
+}
+
 static int qaic_pci_probe(struct pci_dev *pdev,
 			  const struct pci_device_id *id)
 {
@@ -264,6 +286,7 @@ static int qaic_pci_probe(struct pci_dev *pdev,
 	qdev->pdev = pdev;
 	mutex_init(&qdev->cntl_mutex);
 	INIT_LIST_HEAD(&qdev->cntl_xfer_list);
+	INIT_WORK(&qdev->reset_work, reset_work_func);
 	for (i = 0; i < QAIC_NUM_DBC; ++i) {
 		mutex_init(&qdev->dbc[i].mem_lock);
 		spin_lock_init(&qdev->dbc[i].xfer_lock);
@@ -336,6 +359,12 @@ static int qaic_pci_probe(struct pci_dev *pdev,
 			goto get_dbc_irq_failed;
 	}
 
+	ret = devm_request_irq(&pdev->dev, pci_irq_vector(pdev, 31),
+			       reset_irq_handler, IRQF_SHARED, "qaic_reset",
+			       qdev);
+	if (ret)
+		goto get_reset_irq_failed;
+
 	qdev->mhi_cntl = qaic_mhi_register_controller(pdev, qdev->bar_0, mhi_irq);
 	if (IS_ERR(qdev->mhi_cntl)) {
 		ret = PTR_ERR(qdev->mhi_cntl);
@@ -346,6 +375,8 @@ static int qaic_pci_probe(struct pci_dev *pdev,
 	return 0;
 
 mhi_register_fail:
+	devm_free_irq(&pdev->dev, pci_irq_vector(pdev, 31), qdev);
+get_reset_irq_failed:
 get_dbc_irq_failed:
 	for (i = 0; i < QAIC_NUM_DBC; ++i)
 		devm_free_irq(&pdev->dev, pci_irq_vector(pdev, i + 1),
@@ -387,6 +418,7 @@ static void qaic_pci_remove(struct pci_dev *pdev)
 			      &qdev->dbc[i]);
 		cleanup_srcu_struct(&qdev->dbc[i].ch_lock);
 	}
+	devm_free_irq(&pdev->dev, pci_irq_vector(pdev, 31), qdev);
 	pci_free_irq_vectors(pdev);
 	iounmap(qdev->bar_0);
 	pci_clear_master(pdev);
@@ -488,4 +520,4 @@ module_exit(qaic_exit);
 
 MODULE_DESCRIPTION("QTI Cloud AI Accelerators Driver");
 MODULE_LICENSE("GPL v2");
-MODULE_VERSION("1.0.2"); /* MAJOR.MINOR.PATCH */
+MODULE_VERSION("1.0.3"); /* MAJOR.MINOR.PATCH */

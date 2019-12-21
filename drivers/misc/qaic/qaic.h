@@ -13,6 +13,7 @@
 #include <linux/pci.h>
 #include <linux/spinlock.h>
 #include <linux/srcu.h>
+#include <linux/workqueue.h>
 
 #define QAIC_NUM_DBC		16
 #define QAIC_DBC_REQ_ELEM_SIZE	0x40
@@ -60,6 +61,7 @@ struct qaic_device {
 	struct cdev		cdev;
 	struct device		*dev;
 	struct dma_bridge_chan	dbc[QAIC_NUM_DBC];
+	struct work_struct	reset_work;
 };
 
 int qaic_manage_ioctl(struct qaic_device *qdev, struct qaic_user *usr,
