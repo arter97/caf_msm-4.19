@@ -230,7 +230,8 @@ free_partial_alloc:
 	for (sg = sgt->sgl; sg; sg = sg_next(sg))
 		if (sg_page(sg)) {
 			reserve_pages(page_to_pfn(sg_page(sg)),
-				      sg->length/PAGE_SIZE, false);
+				      DIV_ROUND_UP(sg->length, PAGE_SIZE),
+				      false);
 			__free_pages(sg_page(sg), get_order(sg->length));
 		}
 free_sgt:
@@ -253,9 +254,10 @@ static void free_handle_mem(struct kref *kref)
 	for (sg = sgt->sgl; sg; sg = sg_next(sg))
 		if (sg_page(sg)) {
 			reserve_pages(page_to_pfn(sg_page(sg)),
-				      sg->length/PAGE_SIZE, false);
+				      DIV_ROUND_UP(sg->length, PAGE_SIZE),
+				      false);
 			__free_pages(sg_page(sg), get_order(sg->length));
-	}
+		}
 	kfree(sgt);
 	kfree(mem->reqs);
 	kfree(mem);
