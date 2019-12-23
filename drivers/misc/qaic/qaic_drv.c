@@ -360,8 +360,7 @@ static int qaic_pci_probe(struct pci_dev *pdev,
 	}
 
 	ret = devm_request_irq(&pdev->dev, pci_irq_vector(pdev, 31),
-			       reset_irq_handler, IRQF_SHARED, "qaic_reset",
-			       qdev);
+			       reset_irq_handler, 0, "qaic_reset", qdev);
 	if (ret)
 		goto get_reset_irq_failed;
 
@@ -520,4 +519,4 @@ module_exit(qaic_exit);
 
 MODULE_DESCRIPTION("QTI Cloud AI Accelerators Driver");
 MODULE_LICENSE("GPL v2");
-MODULE_VERSION("1.0.4"); /* MAJOR.MINOR.PATCH */
+MODULE_VERSION("1.0.5"); /* MAJOR.MINOR.PATCH */
