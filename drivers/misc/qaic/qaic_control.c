@@ -128,13 +128,15 @@ static void save_dbc_buf(struct qaic_device *qdev,
 {
 	u32 dbc_id = resources->dbc_id;
 
-	qdev->dbc[dbc_id].req_q_base = resources->buf;
-	qdev->dbc[dbc_id].rsp_q_base = resources->rsp_q_base;
-	qdev->dbc[dbc_id].dma_addr = resources->dma_addr;
-	qdev->dbc[dbc_id].total_size = resources->total_size;
-	qdev->dbc[dbc_id].nelem = resources->nelem;
-	qdev->dbc[dbc_id].usr = usr;
-	resources->buf = 0;
+	if (resources->buf) {
+		qdev->dbc[dbc_id].req_q_base = resources->buf;
+		qdev->dbc[dbc_id].rsp_q_base = resources->rsp_q_base;
+		qdev->dbc[dbc_id].dma_addr = resources->dma_addr;
+		qdev->dbc[dbc_id].total_size = resources->total_size;
+		qdev->dbc[dbc_id].nelem = resources->nelem;
+		qdev->dbc[dbc_id].usr = usr;
+		resources->buf = 0;
+	}
 }
 static void free_dbc_buf(struct qaic_device *qdev,
 			 struct ioctl_resources *resources)
