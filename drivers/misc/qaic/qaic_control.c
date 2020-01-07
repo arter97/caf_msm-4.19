@@ -635,7 +635,8 @@ static void *msg_xfer(struct qaic_device *qdev, void *in_buf, size_t in_len,
 		 * likely cause memory corruption
 		 */
 		mutex_lock(&qdev->cntl_mutex);
-		list_del(&elem.list);
+		if (!list_empty(&elem.list))
+			list_del(&elem.list);
 		mutex_unlock(&qdev->cntl_mutex);
 		return ERR_PTR(!ret ? -ETIMEDOUT : ret);
 	}
@@ -763,7 +764,7 @@ void qaic_mhi_dl_xfer_cb(struct mhi_device *mhi_dev,
 	list_for_each_entry_safe(elem, i, &qdev->cntl_xfer_list, list) {
 		if (elem->seq_num == le32_to_cpu(msg->hdr.sequence_number)) {
 			found = true;
-			list_del(&elem->list);
+			list_del_init(&elem->list);
 			break;
 		}
 	}
