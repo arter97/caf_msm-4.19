@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2015-2019, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2015-2020, The Linux Foundation. All rights reserved.
  */
 
 #include <linux/of.h>
@@ -968,7 +968,6 @@ int gsi_complete_clk_grant(unsigned long dev_hdl)
 
 	return GSI_STATUS_SUCCESS;
 }
-EXPORT_SYMBOL(gsi_complete_clk_grant);
 
 int gsi_map_base(phys_addr_t gsi_base_addr, u32 gsi_size)
 {
@@ -992,7 +991,6 @@ int gsi_map_base(phys_addr_t gsi_base_addr, u32 gsi_size)
 
 	return 0;
 }
-EXPORT_SYMBOL(gsi_map_base);
 
 int gsi_unmap_base(void)
 {
@@ -1012,7 +1010,6 @@ int gsi_unmap_base(void)
 
 	return 0;
 }
-EXPORT_SYMBOL(gsi_unmap_base);
 
 int gsi_register_device(struct gsi_per_props *props, unsigned long *dev_hdl)
 {
@@ -1291,7 +1288,6 @@ int gsi_register_device(struct gsi_per_props *props, unsigned long *dev_hdl)
 
 	return GSI_STATUS_SUCCESS;
 }
-EXPORT_SYMBOL(gsi_register_device);
 
 int gsi_write_device_scratch(unsigned long dev_hdl,
 		struct gsi_device_scratch *val)
@@ -1343,7 +1339,6 @@ int gsi_write_device_scratch(unsigned long dev_hdl,
 
 	return GSI_STATUS_SUCCESS;
 }
-EXPORT_SYMBOL(gsi_write_device_scratch);
 
 int gsi_deregister_device(unsigned long dev_hdl, bool force)
 {
@@ -1389,7 +1384,6 @@ int gsi_deregister_device(unsigned long dev_hdl, bool force)
 
 	return GSI_STATUS_SUCCESS;
 }
-EXPORT_SYMBOL(gsi_deregister_device);
 
 static void gsi_program_evt_ring_ctx(struct gsi_evt_ring_props *props,
 		uint8_t evt_id, unsigned int ee)
@@ -1719,7 +1713,6 @@ int gsi_alloc_evt_ring(struct gsi_evt_ring_props *props, unsigned long dev_hdl,
 
 	return GSI_STATUS_SUCCESS;
 }
-EXPORT_SYMBOL(gsi_alloc_evt_ring);
 
 static void __gsi_write_evt_ring_scratch(unsigned long evt_ring_hdl,
 		union __packed gsi_evt_scratch val)
@@ -1762,7 +1755,6 @@ int gsi_write_evt_ring_scratch(unsigned long evt_ring_hdl,
 
 	return GSI_STATUS_SUCCESS;
 }
-EXPORT_SYMBOL(gsi_write_evt_ring_scratch);
 
 int gsi_dealloc_evt_ring(unsigned long evt_ring_hdl)
 {
@@ -1830,7 +1822,6 @@ int gsi_dealloc_evt_ring(unsigned long evt_ring_hdl)
 
 	return GSI_STATUS_SUCCESS;
 }
-EXPORT_SYMBOL(gsi_dealloc_evt_ring);
 
 int gsi_query_evt_ring_db_addr(unsigned long evt_ring_hdl,
 		uint32_t *db_addr_wp_lsb, uint32_t *db_addr_wp_msb)
@@ -1868,7 +1859,6 @@ int gsi_query_evt_ring_db_addr(unsigned long evt_ring_hdl,
 
 	return GSI_STATUS_SUCCESS;
 }
-EXPORT_SYMBOL(gsi_query_evt_ring_db_addr);
 
 int gsi_ring_evt_ring_db(unsigned long evt_ring_hdl, uint64_t value)
 {
@@ -1897,7 +1887,6 @@ int gsi_ring_evt_ring_db(unsigned long evt_ring_hdl, uint64_t value)
 
 	return GSI_STATUS_SUCCESS;
 }
-EXPORT_SYMBOL(gsi_ring_evt_ring_db);
 
 int gsi_ring_ch_ring_db(unsigned long chan_hdl, uint64_t value)
 {
@@ -1935,7 +1924,6 @@ int gsi_ring_ch_ring_db(unsigned long chan_hdl, uint64_t value)
 
 	return GSI_STATUS_SUCCESS;
 }
-EXPORT_SYMBOL(gsi_ring_ch_ring_db);
 
 int gsi_reset_evt_ring(unsigned long evt_ring_hdl)
 {
@@ -2000,7 +1988,6 @@ int gsi_reset_evt_ring(unsigned long evt_ring_hdl)
 
 	return GSI_STATUS_SUCCESS;
 }
-EXPORT_SYMBOL(gsi_reset_evt_ring);
 
 int gsi_get_evt_ring_cfg(unsigned long evt_ring_hdl,
 		struct gsi_evt_ring_props *props, union gsi_evt_scratch *scr)
@@ -2036,7 +2023,6 @@ int gsi_get_evt_ring_cfg(unsigned long evt_ring_hdl,
 
 	return GSI_STATUS_SUCCESS;
 }
-EXPORT_SYMBOL(gsi_get_evt_ring_cfg);
 
 int gsi_set_evt_ring_cfg(unsigned long evt_ring_hdl,
 		struct gsi_evt_ring_props *props, union gsi_evt_scratch *scr)
@@ -2078,7 +2064,6 @@ int gsi_set_evt_ring_cfg(unsigned long evt_ring_hdl,
 
 	return gsi_reset_evt_ring(evt_ring_hdl);
 }
-EXPORT_SYMBOL(gsi_set_evt_ring_cfg);
 
 static void gsi_program_chan_ctx_qos(struct gsi_chan_props *props,
 	unsigned int ee)
@@ -2430,7 +2415,6 @@ int gsi_alloc_channel(struct gsi_chan_props *props, unsigned long dev_hdl,
 
 	return GSI_STATUS_SUCCESS;
 }
-EXPORT_SYMBOL(gsi_alloc_channel);
 
 static int gsi_alloc_ap_channel(unsigned int chan_hdl)
 {
@@ -2530,7 +2514,6 @@ int gsi_write_channel_scratch3_reg(unsigned long chan_hdl,
 	mutex_unlock(&ctx->mlock);
 	return GSI_STATUS_SUCCESS;
 }
-EXPORT_SYMBOL(gsi_write_channel_scratch3_reg);
 
 int gsi_write_channel_scratch2_reg(unsigned long chan_hdl,
 		union __packed gsi_wdi2_channel_scratch2_reg val)
@@ -2562,7 +2545,6 @@ int gsi_write_channel_scratch2_reg(unsigned long chan_hdl,
 	mutex_unlock(&ctx->mlock);
 	return GSI_STATUS_SUCCESS;
 }
-EXPORT_SYMBOL(gsi_write_channel_scratch2_reg);
 
 static void __gsi_read_channel_scratch(unsigned long chan_hdl,
 		union __packed gsi_channel_scratch * val)
@@ -2674,7 +2656,6 @@ int gsi_write_channel_scratch(unsigned long chan_hdl,
 
 	return GSI_STATUS_SUCCESS;
 }
-EXPORT_SYMBOL(gsi_write_channel_scratch);
 
 int gsi_read_channel_scratch(unsigned long chan_hdl,
 		union __packed gsi_channel_scratch *val)
@@ -2707,7 +2688,6 @@ int gsi_read_channel_scratch(unsigned long chan_hdl,
 
 	return GSI_STATUS_SUCCESS;
 }
-EXPORT_SYMBOL(gsi_read_channel_scratch);
 
 int gsi_update_mhi_channel_scratch(unsigned long chan_hdl,
 		struct __packed gsi_mhi_channel_scratch mscr)
@@ -2739,7 +2719,6 @@ int gsi_update_mhi_channel_scratch(unsigned long chan_hdl,
 
 	return GSI_STATUS_SUCCESS;
 }
-EXPORT_SYMBOL(gsi_update_mhi_channel_scratch);
 
 int gsi_query_channel_db_addr(unsigned long chan_hdl,
 		uint32_t *db_addr_wp_lsb, uint32_t *db_addr_wp_msb)
@@ -2773,7 +2752,6 @@ int gsi_query_channel_db_addr(unsigned long chan_hdl,
 
 	return GSI_STATUS_SUCCESS;
 }
-EXPORT_SYMBOL(gsi_query_channel_db_addr);
 
 int gsi_start_channel(unsigned long chan_hdl)
 {
@@ -2850,7 +2828,6 @@ int gsi_start_channel(unsigned long chan_hdl)
 
 	return GSI_STATUS_SUCCESS;
 }
-EXPORT_SYMBOL(gsi_start_channel);
 
 int gsi_stop_channel(unsigned long chan_hdl)
 {
@@ -2928,7 +2905,6 @@ free_lock:
 	mutex_unlock(&gsi_ctx->mlock);
 	return res;
 }
-EXPORT_SYMBOL(gsi_stop_channel);
 
 int gsi_stop_db_channel(unsigned long chan_hdl)
 {
@@ -2997,7 +2973,6 @@ free_lock:
 	mutex_unlock(&gsi_ctx->mlock);
 	return res;
 }
-EXPORT_SYMBOL(gsi_stop_db_channel);
 
 int gsi_reset_channel(unsigned long chan_hdl)
 {
@@ -3094,7 +3069,6 @@ revrfy_chnlstate:
 
 	return GSI_STATUS_SUCCESS;
 }
-EXPORT_SYMBOL(gsi_reset_channel);
 
 int gsi_dealloc_channel(unsigned long chan_hdl)
 {
@@ -3166,7 +3140,6 @@ int gsi_dealloc_channel(unsigned long chan_hdl)
 	}
 	return GSI_STATUS_SUCCESS;
 }
-EXPORT_SYMBOL(gsi_dealloc_channel);
 
 void gsi_update_ch_dp_stats(struct gsi_chan_ctx *ctx, uint16_t used)
 {
@@ -3290,7 +3263,6 @@ int gsi_query_channel_info(unsigned long chan_hdl,
 
 	return GSI_STATUS_SUCCESS;
 }
-EXPORT_SYMBOL(gsi_query_channel_info);
 
 int gsi_is_channel_empty(unsigned long chan_hdl, bool *is_empty)
 {
@@ -3371,7 +3343,6 @@ int gsi_is_channel_empty(unsigned long chan_hdl, bool *is_empty)
 
 	return GSI_STATUS_SUCCESS;
 }
-EXPORT_SYMBOL(gsi_is_channel_empty);
 
 int __gsi_get_gci_cookie(struct gsi_chan_ctx *ctx, uint16_t idx)
 {
@@ -3583,7 +3554,6 @@ ring_doorbell:
 
 	return GSI_STATUS_SUCCESS;
 }
-EXPORT_SYMBOL(gsi_queue_xfer);
 
 int gsi_start_xfer(unsigned long chan_hdl)
 {
@@ -3619,7 +3589,6 @@ int gsi_start_xfer(unsigned long chan_hdl)
 
 	return GSI_STATUS_SUCCESS;
 };
-EXPORT_SYMBOL(gsi_start_xfer);
 
 int gsi_poll_channel(unsigned long chan_hdl,
 		struct gsi_chan_xfer_notify *notify)
@@ -3628,7 +3597,6 @@ int gsi_poll_channel(unsigned long chan_hdl,
 
 	return gsi_poll_n_channel(chan_hdl, notify, 1, &unused_var);
 }
-EXPORT_SYMBOL(gsi_poll_channel);
 
 int gsi_poll_n_channel(unsigned long chan_hdl,
 		struct gsi_chan_xfer_notify *notify,
@@ -3712,7 +3680,6 @@ int gsi_poll_n_channel(unsigned long chan_hdl,
 
 	return GSI_STATUS_SUCCESS;
 }
-EXPORT_SYMBOL(gsi_poll_n_channel);
 
 int gsi_config_channel_mode(unsigned long chan_hdl, enum gsi_chan_mode mode)
 {
@@ -3828,7 +3795,6 @@ int gsi_config_channel_mode(unsigned long chan_hdl, enum gsi_chan_mode mode)
 	spin_unlock_irqrestore(&gsi_ctx->slock, flags);
 	return GSI_STATUS_SUCCESS;
 }
-EXPORT_SYMBOL(gsi_config_channel_mode);
 
 int gsi_get_channel_cfg(unsigned long chan_hdl, struct gsi_chan_props *props,
 		union gsi_channel_scratch *scr)
@@ -3864,7 +3830,6 @@ int gsi_get_channel_cfg(unsigned long chan_hdl, struct gsi_chan_props *props,
 
 	return GSI_STATUS_SUCCESS;
 }
-EXPORT_SYMBOL(gsi_get_channel_cfg);
 
 int gsi_set_channel_cfg(unsigned long chan_hdl, struct gsi_chan_props *props,
 		union gsi_channel_scratch *scr)
@@ -3913,7 +3878,6 @@ int gsi_set_channel_cfg(unsigned long chan_hdl, struct gsi_chan_props *props,
 
 	return GSI_STATUS_SUCCESS;
 }
-EXPORT_SYMBOL(gsi_set_channel_cfg);
 
 static void gsi_configure_ieps(void *base, enum gsi_ver ver)
 {
@@ -4006,7 +3970,6 @@ int gsi_configure_regs(phys_addr_t per_base_addr, enum gsi_ver ver)
 
 	return 0;
 }
-EXPORT_SYMBOL(gsi_configure_regs);
 
 int gsi_enable_fw(phys_addr_t gsi_base_addr, u32 gsi_size, enum gsi_ver ver)
 {
@@ -4063,7 +4026,6 @@ int gsi_enable_fw(phys_addr_t gsi_base_addr, u32 gsi_size, enum gsi_ver ver)
 	return 0;
 
 }
-EXPORT_SYMBOL(gsi_enable_fw);
 
 void gsi_get_inst_ram_offset_and_size(unsigned long *base_offset,
 		unsigned long *size, enum gsi_ver ver)
@@ -4110,7 +4072,6 @@ void gsi_get_inst_ram_offset_and_size(unsigned long *base_offset,
 			*base_offset = GSI_V2_5_GSI_INST_RAM_n_OFFS(0);
 	}
 }
-EXPORT_SYMBOL(gsi_get_inst_ram_offset_and_size);
 
 int gsi_halt_channel_ee(unsigned int chan_idx, unsigned int ee, int *code)
 {
@@ -4178,7 +4139,6 @@ free_lock:
 
 	return res;
 }
-EXPORT_SYMBOL(gsi_halt_channel_ee);
 
 int gsi_alloc_channel_ee(unsigned int chan_idx, unsigned int ee, int *code)
 {
@@ -4247,7 +4207,6 @@ free_lock:
 
 	return res;
 }
-EXPORT_SYMBOL(gsi_alloc_channel_ee);
 
 int gsi_map_virtual_ch_to_per_ep(u32 ee, u32 chan_num, u32 per_ep_index)
 {
@@ -4267,7 +4226,6 @@ int gsi_map_virtual_ch_to_per_ep(u32 ee, u32 chan_num, u32 per_ep_index)
 
 	return 0;
 }
-EXPORT_SYMBOL(gsi_map_virtual_ch_to_per_ep);
 
 void gsi_wdi3_write_evt_ring_db(unsigned long evt_ring_hdl,
 	uint32_t db_addr_low, uint32_t db_addr_high)
@@ -4283,7 +4241,6 @@ void gsi_wdi3_write_evt_ring_db(unsigned long evt_ring_hdl,
 	gsi_writel(db_addr_high, gsi_ctx->base +
 		GSI_EE_n_EV_CH_k_CNTXT_13_OFFS(evt_ring_hdl, gsi_ctx->per.ee));
 }
-EXPORT_SYMBOL(gsi_wdi3_write_evt_ring_db);
 
 void gsi_wdi3_dump_register(unsigned long chan_hdl)
 {
@@ -4355,7 +4312,6 @@ void gsi_wdi3_dump_register(unsigned long chan_hdl)
 			gsi_ctx->per.ee));
 	GSIDBG("GSI_EE_n_GSI_CH_k_SCRATCH_3_OFFS 0x%x\n", val);
 }
-EXPORT_SYMBOL(gsi_wdi3_dump_register);
 
 static int msm_gsi_probe(struct platform_device *pdev)
 {
