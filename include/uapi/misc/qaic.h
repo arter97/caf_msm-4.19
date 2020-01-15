@@ -9,7 +9,7 @@
 #include <linux/ioctl.h>
 #include <linux/types.h>
 
-#define MANAGE_MAX_MSG_LENGTH 236
+#define MANAGE_MAX_MSG_LENGTH 16364
 
 enum sem_flags {
 	SEM_INSYNCFENCE =	0x1,
