@@ -24,6 +24,39 @@ const char * const mhi_log_level_str[MHI_MSG_LVL_MAX] = {
 };
 static struct dentry *root_dentry;
 
+static ssize_t soc_reset_store(struct device *dev,
+			       struct device_attribute *attr,
+			       const char *buf, size_t count)
+{
+	struct mhi_device *mhi_dev = container_of(dev, struct mhi_device, dev);
+	struct mhi_controller *mhi_cntrl = mhi_dev->mhi_cntrl;
+	unsigned long value;
+	int rc;
+
+	rc = kstrtoul(buf, 0, &value);
+
+	if (rc) {
+		count = -EINVAL;
+		goto out;
+	}
+
+	mhi_write_reg(mhi_cntrl, mhi_cntrl->regs, mhi_cntrl->soc_reset_offset,
+		      mhi_cntrl->soc_reset_val);
+
+out:
+	return count;
+}
+
+DEVICE_ATTR_WO(soc_reset);
+
+static struct attribute *reset_attrs[] = {
+	&dev_attr_soc_reset.attr,
+	NULL,
+};
+
+static struct attribute_group cntrl_soc_reset_group = {
+	.attrs = reset_attrs,
+};
 const char * const mhi_ee_str[MHI_EE_MAX] = {
 	[MHI_EE_PBL] = "PBL",
 	[MHI_EE_SBL] = "SBL",
@@ -1917,6 +1950,12 @@ int register_mhi_controller(struct mhi_controller *mhi_cntrl,
 	if (ret)
 		goto error_add_dev;
 
+	if (mhi_cntrl->has_soc_reset) {
+		ret = device_add_group(&mhi_dev->dev, &cntrl_soc_reset_group);
+		if (ret)
+			goto error_add_reset;
+	}
+
 	mhi_cntrl->mhi_dev = mhi_dev;
 
 	if (mhi_cntrl->sfr_len) {
@@ -1948,6 +1987,8 @@ int register_mhi_controller(struct mhi_controller *mhi_cntrl,
 
 error_alloc_sfr:
 	kfree(sfr_info);
+error_add_reset:
+	device_del(&mhi_dev->dev);
 
 error_add_dev:
 	mhi_dealloc_device(mhi_cntrl, mhi_dev);
@@ -1978,6 +2019,8 @@ void mhi_unregister_mhi_controller(struct mhi_controller *mhi_cntrl)
 		kfree(sfr_info->str);
 		kfree(sfr_info);
 	}
+	if (mhi_cntrl->has_soc_reset)
+		device_remove_group(&mhi_dev->dev, &cntrl_soc_reset_group);
 
 	device_del(&mhi_dev->dev);
 	put_device(&mhi_dev->dev);
