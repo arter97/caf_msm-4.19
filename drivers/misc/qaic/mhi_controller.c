@@ -423,6 +423,10 @@ struct mhi_controller *qaic_mhi_register_controller(struct pci_dev *pci_dev,
 
 	mhi_cntl->fw_image = "qcom/aic100/sbl.bin";
 
+	mhi_cntl->has_soc_reset = true;
+	mhi_cntl->soc_reset_offset = 0xb0;
+	mhi_cntl->soc_reset_val = 0x1;
+
 	/* use latest configured timeout */
 	aic100_config.timeout_ms = mhi_timeout;
 	ret = register_mhi_controller(mhi_cntl, &aic100_config);
