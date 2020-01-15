@@ -234,6 +234,7 @@ free_partial_alloc:
 				      false);
 			__free_pages(sg_page(sg), get_order(sg->length));
 		}
+	sg_free_table(sgt);
 free_sgt:
 	kfree(sgt);
 free_mem:
@@ -258,6 +259,7 @@ static void free_handle_mem(struct kref *kref)
 				      false);
 			__free_pages(sg_page(sg), get_order(sg->length));
 		}
+	sg_free_table(sgt);
 	kfree(sgt);
 	kfree(mem->reqs);
 	kfree(mem);
