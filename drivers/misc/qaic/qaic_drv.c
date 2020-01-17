@@ -282,6 +282,11 @@ static int qaic_pci_probe(struct pci_dev *pdev,
 		goto qdev_fail;
 	}
 
+	qdev->cntl_wq = alloc_workqueue("qaic_cntl", WQ_UNBOUND, 0);
+	if (!qdev->cntl_wq) {
+		ret = -ENOMEM;
+		goto wq_fail;
+	}
 	pci_set_drvdata(pdev, qdev);
 	qdev->pdev = pdev;
 	mutex_init(&qdev->cntl_mutex);
@@ -397,6 +402,8 @@ enable_fail:
 bar_fail:
 	for (i = 0; i < QAIC_NUM_DBC; ++i)
 		cleanup_srcu_struct(&qdev->dbc[i].ch_lock);
+	destroy_workqueue(qdev->cntl_wq);
+wq_fail:
 	kfree(qdev);
 qdev_fail:
 	return ret;
@@ -417,6 +424,7 @@ static void qaic_pci_remove(struct pci_dev *pdev)
 			      &qdev->dbc[i]);
 		cleanup_srcu_struct(&qdev->dbc[i].ch_lock);
 	}
+	destroy_workqueue(qdev->cntl_wq);
 	devm_free_irq(&pdev->dev, pci_irq_vector(pdev, 31), qdev);
 	pci_free_irq_vectors(pdev);
 	iounmap(qdev->bar_0);
@@ -519,4 +527,4 @@ module_exit(qaic_exit);
 
 MODULE_DESCRIPTION("QTI Cloud AI Accelerators Driver");
 MODULE_LICENSE("GPL v2");
-MODULE_VERSION("1.2.1"); /* MAJOR.MINOR.PATCH */
+MODULE_VERSION("1.2.2"); /* MAJOR.MINOR.PATCH */

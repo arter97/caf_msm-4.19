@@ -13,6 +13,7 @@
 #include <linux/scatterlist.h>
 #include <linux/types.h>
 #include <linux/uaccess.h>
+#include <linux/workqueue.h>
 #include <uapi/misc/qaic.h>
 
 #include "qaic.h"
@@ -120,6 +121,12 @@ struct ioctl_resources {
 	void *rsp_q_base;
 	u32 status;
 	u32 dbc_id;
+};
+
+struct resp_work {
+	struct work_struct work;
+	struct qaic_device *qdev;
+	void *buf;
 };
 
 static void save_dbc_buf(struct qaic_device *qdev,
@@ -730,30 +737,14 @@ out:
 	return ret;
 }
 
-void qaic_mhi_ul_xfer_cb(struct mhi_device *mhi_dev,
-			 struct mhi_result *mhi_result)
+static void resp_worker(struct work_struct *work)
 {
-	struct _msg *msg = mhi_result->buf_addr;
-	struct wrapper_msg *wrapper = container_of(msg, struct wrapper_msg,
-						   msg);
-
-	if (wrapper->free_on_xmit)
-		kfree(wrapper);
-}
-
-void qaic_mhi_dl_xfer_cb(struct mhi_device *mhi_dev,
-			 struct mhi_result *mhi_result)
-{
-	struct qaic_device *qdev = mhi_device_get_devdata(mhi_dev);
-	struct _msg *msg = mhi_result->buf_addr;
+	struct resp_work *resp = container_of(work, struct resp_work, work);
+	struct qaic_device *qdev = resp->qdev;
+	struct _msg *msg = resp->buf;
 	struct xfer_queue_elem *elem;
 	struct xfer_queue_elem *i;
 	bool found = false;
-
-	if (mhi_result->transaction_status) {
-		kfree(msg);
-		return;
-	}
 
 	if (msg->hdr.magic_number != MANAGE_MAGIC_NUMBER) {
 		kfree(msg);
@@ -777,6 +768,44 @@ void qaic_mhi_dl_xfer_cb(struct mhi_device *mhi_dev,
 	if (!found)
 		/* request must have timed out, drop packet */
 		kfree(msg);
+
+	kfree(resp);
+}
+
+void qaic_mhi_ul_xfer_cb(struct mhi_device *mhi_dev,
+			 struct mhi_result *mhi_result)
+{
+	struct _msg *msg = mhi_result->buf_addr;
+	struct wrapper_msg *wrapper = container_of(msg, struct wrapper_msg,
+						   msg);
+
+	if (wrapper->free_on_xmit)
+		kfree(wrapper);
+}
+
+void qaic_mhi_dl_xfer_cb(struct mhi_device *mhi_dev,
+			 struct mhi_result *mhi_result)
+{
+	struct qaic_device *qdev = mhi_device_get_devdata(mhi_dev);
+	struct _msg *msg = mhi_result->buf_addr;
+	struct resp_work *resp;
+
+	if (mhi_result->transaction_status) {
+		kfree(msg);
+		return;
+	}
+
+	resp = kmalloc(sizeof(*resp), GFP_ATOMIC);
+	if (!resp) {
+		pci_err(qdev->pdev, "dl_xfer_cb alloc fail, dropping message\n");
+		kfree(msg);
+		return;
+	}
+
+	INIT_WORK(&resp->work, resp_worker);
+	resp->qdev = qdev;
+	resp->buf = msg;
+	queue_work(qdev->cntl_wq, &resp->work);
 }
 
 int qaic_control_open(struct qaic_device *qdev)
