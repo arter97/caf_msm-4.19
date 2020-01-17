@@ -556,6 +556,10 @@ static int commit_execute(struct qaic_device *qdev, struct mem_handle *mem,
 	struct dbc_req *reqs = mem->reqs;
 	bool two_copy;
 
+	if (head == U32_MAX || tail == U32_MAX)
+		/* PCI link error */
+		return -ENODEV;
+
 	if (head <= tail)
 		avail += dbc->nelem;
 	else
@@ -732,6 +736,10 @@ read_fifo:
 
 	head = le32_to_cpu(__raw_readl(dbc->dbc_base + RSPHP_OFF));
 	tail = le32_to_cpu(__raw_readl(dbc->dbc_base + RSPTP_OFF));
+
+	if (head == U32_MAX || tail == U32_MAX)
+		/* PCI link error */
+		return IRQ_HANDLED;
 
 	if (head == tail) { /* queue empty */
 		srcu_read_unlock(&dbc->ch_lock, rcu_id);
