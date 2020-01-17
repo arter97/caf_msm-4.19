@@ -8,6 +8,7 @@
 
 #include <linux/cdev.h>
 #include <linux/idr.h>
+#include <linux/kref.h>
 #include <linux/mhi.h>
 #include <linux/mutex.h>
 #include <linux/pci.h>
@@ -24,8 +25,11 @@
 #define QAIC_DBC_OFF(i)		((i) * QAIC_DBC_SIZE + QAIC_DBC_BASE)
 
 struct qaic_user {
-	pid_t handle;
-	struct qaic_device *qdev;
+	pid_t			handle;
+	struct qaic_device	*qdev;
+	struct list_head	node;
+	struct srcu_struct	qdev_lock;
+	struct kref		ref_count;
 };
 
 struct dma_bridge_chan {
@@ -63,6 +67,10 @@ struct qaic_device {
 	struct dma_bridge_chan	dbc[QAIC_NUM_DBC];
 	struct work_struct	reset_work;
 	struct workqueue_struct	*cntl_wq;
+	bool			in_reset;
+	struct srcu_struct	dev_lock;
+	struct list_head	users;
+	struct mutex		users_mutex;
 };
 
 int qaic_manage_ioctl(struct qaic_device *qdev, struct qaic_user *usr,
@@ -88,5 +96,8 @@ void qaic_release_usr(struct qaic_device *qdev, struct qaic_user *usr);
 
 irqreturn_t dbc_irq_handler(int irq, void *data);
 int disable_dbc(struct qaic_device *qdev, u32 dbc_id, struct qaic_user *usr);
+void wakeup_dbc(struct qaic_device *qdev, u32 dbc_id);
 void release_dbc(struct qaic_device *qdev, u32 dbc_id);
+
+void wake_all_cntl(struct qaic_device *qdev);
 #endif /* QAICINTERNAL_H_ */

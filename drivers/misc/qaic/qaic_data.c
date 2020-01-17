@@ -885,17 +885,13 @@ int disable_dbc(struct qaic_device *qdev, u32 dbc_id, struct qaic_user *usr)
 	return 0;
 }
 
-void release_dbc(struct qaic_device *qdev, u32 dbc_id)
+void wakeup_dbc(struct qaic_device *qdev, u32 dbc_id)
 {
 	struct mem_handle *mem;
 	struct mem_handle *i;
-	int next_id = 0;
 
 	qdev->dbc[dbc_id].usr = NULL;
 	synchronize_srcu(&qdev->dbc[dbc_id].ch_lock);
-	dma_free_coherent(&qdev->pdev->dev, qdev->dbc[dbc_id].total_size,
-			  qdev->dbc[dbc_id].req_q_base,
-			  qdev->dbc[dbc_id].dma_addr);
 	list_for_each_entry_safe(mem, i, &qdev->dbc[dbc_id].xfer_list, list) {
 		list_del(&mem->list);
 		dma_sync_sg_for_cpu(&qdev->pdev->dev,
@@ -904,6 +900,21 @@ void release_dbc(struct qaic_device *qdev, u32 dbc_id)
 				    mem->dir);
 		complete_all(&mem->xfer_done);
 	}
+}
+
+void release_dbc(struct qaic_device *qdev, u32 dbc_id)
+{
+	struct mem_handle *mem;
+	int next_id = 0;
+
+	wakeup_dbc(qdev, dbc_id);
+
+	dma_free_coherent(&qdev->pdev->dev, qdev->dbc[dbc_id].total_size,
+			  qdev->dbc[dbc_id].req_q_base,
+			  qdev->dbc[dbc_id].dma_addr);
+	qdev->dbc[dbc_id].total_size = 0;
+	qdev->dbc[dbc_id].req_q_base = NULL;
+	qdev->dbc[dbc_id].dma_addr = 0;
 	while (1) {
 		mem = idr_get_next(&qdev->dbc[dbc_id].mem_handles, &next_id);
 		if (!mem)

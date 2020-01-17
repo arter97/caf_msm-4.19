@@ -594,6 +594,11 @@ static void *msg_xfer(struct qaic_device *qdev, void *in_buf, size_t in_len,
 	struct _msg *out_buf;
 	long ret;
 
+	if (qdev->in_reset) {
+		mutex_unlock(&qdev->cntl_mutex);
+		return ERR_PTR(-ENODEV);
+	}
+
 	elem.seq_num = seq_num;
 	elem.buf = NULL;
 	init_completion(&elem.xfer_done);
@@ -862,4 +867,17 @@ void qaic_release_usr(struct qaic_device *qdev, struct qaic_user *usr)
 	 * By ignoring the response, we can unblock this client faster.
 	 */
 	msg_xfer(qdev, msg, sizeof(*msg), qdev->next_seq_num - 1, true);
+}
+
+void wake_all_cntl(struct qaic_device *qdev)
+{
+	struct xfer_queue_elem *elem;
+	struct xfer_queue_elem *i;
+
+	mutex_lock(&qdev->cntl_mutex);
+	list_for_each_entry_safe(elem, i, &qdev->cntl_xfer_list, list) {
+		list_del_init(&elem->list);
+		complete_all(&elem->xfer_done);
+	}
+	mutex_unlock(&qdev->cntl_mutex);
 }

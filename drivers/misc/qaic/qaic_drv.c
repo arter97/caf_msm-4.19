@@ -6,6 +6,7 @@
 #include <linux/delay.h>
 #include <linux/idr.h>
 #include <linux/list.h>
+#include <linux/kref.h>
 #include <linux/mhi.h>
 #include <linux/module.h>
 #include <linux/mutex.h>
@@ -44,10 +45,20 @@ static const struct file_operations qaic_ops = {
 	.mmap = qaic_mmap,
 };
 
+static void free_usr(struct kref *kref)
+{
+	struct qaic_user *usr = container_of(kref, struct qaic_user, ref_count);
+
+	list_del(&usr->node);
+	cleanup_srcu_struct(&usr->qdev_lock);
+	kfree(usr);
+}
+
 static int qaic_device_open(struct inode *inode, struct file *filp)
 {
 	struct qaic_device *qdev;
 	struct qaic_user *usr;
+	int rcu_id;
 	int ret;
 
 	ret = mutex_lock_interruptible(&qaic_devs_lock);
@@ -58,16 +69,36 @@ static int qaic_device_open(struct inode *inode, struct file *filp)
 
 	pci_dbg(qdev->pdev, "%s pid:%d\n", __func__, current->pid);
 
+	rcu_id = srcu_read_lock(&qdev->dev_lock);
+	if (qdev->in_reset) {
+		srcu_read_unlock(&qdev->dev_lock, rcu_id);
+		return -ENODEV;
+	}
+
 	usr = kmalloc(sizeof(*usr), GFP_KERNEL);
 	if (!usr)
 		return -ENOMEM;
 
 	usr->handle = current->pid;
 	usr->qdev = qdev;
-	filp->private_data = usr;
+	init_srcu_struct(&usr->qdev_lock);
+	kref_init(&usr->ref_count);
 
+	ret = mutex_lock_interruptible(&qdev->users_mutex);
+	if (ret) {
+		cleanup_srcu_struct(&usr->qdev_lock);
+		kfree(usr);
+		srcu_read_unlock(&qdev->dev_lock, rcu_id);
+		return ret;
+	}
+
+	list_add(&usr->node, &qdev->users);
+	mutex_unlock(&qdev->users_mutex);
+
+	filp->private_data = usr;
 	nonseekable_open(inode, filp);
 
+	srcu_read_unlock(&qdev->dev_lock, rcu_id);
 	return 0;
 }
 
@@ -75,13 +106,30 @@ static int qaic_device_release(struct inode *inode, struct file *filp)
 {
 	struct qaic_user *usr = filp->private_data;
 	struct qaic_device *qdev = usr->qdev;
+	int qdev_rcu_id;
+	int usr_rcu_id;
 
-	pci_dbg(qdev->pdev, "%s pid:%d\n", __func__, current->pid);
+	usr_rcu_id = srcu_read_lock(&usr->qdev_lock);
+	if (qdev) {
+		qdev_rcu_id = srcu_read_lock(&qdev->dev_lock);
+		if (!qdev->in_reset) {
+			pci_dbg(qdev->pdev, "%s pid:%d\n", __func__,
+								current->pid);
+			qaic_release_usr(qdev, usr);
+		}
+		srcu_read_unlock(&qdev->dev_lock, qdev_rcu_id);
 
-	qaic_release_usr(qdev, usr);
+		srcu_read_unlock(&usr->qdev_lock, usr_rcu_id);
+		mutex_lock(&qdev->users_mutex);
+		kref_put(&usr->ref_count, free_usr);
+		mutex_unlock(&qdev->users_mutex);
+	} else {
+		srcu_read_unlock(&usr->qdev_lock, usr_rcu_id);
+		/* safe to do without the mutex because reset already has ref */
+		kref_put(&usr->ref_count, free_usr);
+	}
 
 	filp->private_data = NULL;
-	kfree(usr);
 	return 0;
 }
 
@@ -90,14 +138,32 @@ static long qaic_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 	struct qaic_user *usr = filp->private_data;
 	struct qaic_device *qdev = usr->qdev;
 	unsigned int nr = _IOC_NR(cmd);
+	int qdev_rcu_id;
+	int usr_rcu_id;
 	int ret;
+
+	usr_rcu_id = srcu_read_lock(&usr->qdev_lock);
+	if (!qdev) {
+		srcu_read_unlock(&usr->qdev_lock, usr_rcu_id);
+		return -ENODEV;
+	}
 
 	pci_dbg(qdev->pdev, "%s pid:%d cmd:0x%x (%c nr=%d len=%d dir=%d)\n",
 		__func__, current->pid, cmd, _IOC_TYPE(cmd), _IOC_NR(cmd),
 		_IOC_SIZE(cmd), _IOC_DIR(cmd));
 
-	if (_IOC_TYPE(cmd) != 'Q')
+	qdev_rcu_id = srcu_read_lock(&qdev->dev_lock);
+	if (qdev->in_reset) {
+		srcu_read_unlock(&qdev->dev_lock, qdev_rcu_id);
+		srcu_read_unlock(&usr->qdev_lock, usr_rcu_id);
+		return -ENODEV;
+	}
+
+	if (_IOC_TYPE(cmd) != 'Q') {
+		srcu_read_unlock(&qdev->dev_lock, qdev_rcu_id);
+		srcu_read_unlock(&usr->qdev_lock, usr_rcu_id);
 		return -ENOTTY;
+	}
 
 	switch (nr) {
 	case QAIC_IOCTL_MANAGE_NR:
@@ -133,9 +199,11 @@ static long qaic_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		ret = qaic_wait_exec_ioctl(qdev, usr, arg);
 		break;
 	default:
-		return -ENOTTY;
+		ret = -ENOTTY;
 	}
 
+	srcu_read_unlock(&qdev->dev_lock, qdev_rcu_id);
+	srcu_read_unlock(&usr->qdev_lock, usr_rcu_id);
 	return ret;
 }
 
@@ -143,8 +211,28 @@ static int qaic_mmap(struct file *filp, struct vm_area_struct *vma)
 {
 	struct qaic_user *usr = filp->private_data;
 	struct qaic_device *qdev = usr->qdev;
+	int qdev_rcu_id;
+	int usr_rcu_id;
+	int ret;
 
-	return qaic_data_mmap(qdev, usr, vma);
+	usr_rcu_id = srcu_read_lock(&usr->qdev_lock);
+	if (!qdev) {
+		srcu_read_unlock(&usr->qdev_lock, usr_rcu_id);
+		return -ENODEV;
+	}
+
+	qdev_rcu_id = srcu_read_lock(&qdev->dev_lock);
+	if (qdev->in_reset) {
+		srcu_read_unlock(&qdev->dev_lock, qdev_rcu_id);
+		srcu_read_unlock(&usr->qdev_lock, usr_rcu_id);
+		return -ENODEV;
+	}
+
+	ret = qaic_data_mmap(qdev, usr, vma);
+
+	srcu_read_unlock(&qdev->dev_lock, qdev_rcu_id);
+	srcu_read_unlock(&usr->qdev_lock, usr_rcu_id);
+	return ret;
 }
 
 static int qaic_mhi_probe(struct mhi_device *mhi_dev,
@@ -228,22 +316,6 @@ err:
 
 static void qaic_mhi_remove(struct mhi_device *mhi_dev)
 {
-	struct qaic_device *qdev;
-	dev_t devno;
-
-	/* invoked when a MHI error is detected, or MHI power down */
-
-	qdev = mhi_device_get_devdata(mhi_dev);
-
-	pci_dbg(qdev->pdev, "%s\n", __func__);
-
-	devno = qdev->dev->devt;
-	qdev->dev = NULL;
-	device_destroy(qaic_class, devno);
-	cdev_del(&qdev->cdev);
-	mutex_lock(&qaic_devs_lock);
-	idr_remove(&qaic_devs, MINOR(devno));
-	mutex_unlock(&qaic_devs_lock);
 }
 
 static void reset_work_func(struct work_struct *work)
@@ -252,6 +324,9 @@ static void reset_work_func(struct work_struct *work)
 	int ret;
 
 	qdev = container_of(work, struct qaic_device, reset_work);
+
+	if (qdev->in_reset)
+		return;
 
 	ret = pci_reset_function(qdev->pdev);
 	if (ret < 0)
@@ -293,6 +368,9 @@ static int qaic_pci_probe(struct pci_dev *pdev,
 	mutex_init(&qdev->cntl_mutex);
 	INIT_LIST_HEAD(&qdev->cntl_xfer_list);
 	INIT_WORK(&qdev->reset_work, reset_work_func);
+	init_srcu_struct(&qdev->dev_lock);
+	INIT_LIST_HEAD(&qdev->users);
+	mutex_init(&qdev->users_mutex);
 	for (i = 0; i < QAIC_NUM_DBC; ++i) {
 		mutex_init(&qdev->dbc[i].mem_lock);
 		spin_lock_init(&qdev->dbc[i].xfer_lock);
@@ -407,6 +485,7 @@ enable_fail:
 bar_fail:
 	for (i = 0; i < QAIC_NUM_DBC; ++i)
 		cleanup_srcu_struct(&qdev->dbc[i].ch_lock);
+	cleanup_srcu_struct(&qdev->dev_lock);
 	destroy_workqueue(qdev->cntl_wq);
 wq_fail:
 	kfree(qdev);
@@ -417,12 +496,52 @@ qdev_fail:
 static void qaic_pci_remove(struct pci_dev *pdev)
 {
 	struct qaic_device *qdev = pci_get_drvdata(pdev);
+	struct qaic_user *usr;
+	struct qaic_user *u;
+	dev_t devno;
 	int i;
 
 	pci_dbg(pdev, "%s\n", __func__);
 	if (!qdev)
 		return;
 
+	qdev->in_reset = true;
+	/* wake up any waiters to avoid waiting for timeouts at sync */
+	wake_all_cntl(qdev);
+	for (i = 0; i < QAIC_NUM_DBC; ++i)
+		wakeup_dbc(qdev, i);
+	synchronize_srcu(&qdev->dev_lock);
+
+	/*
+	 * while the usr still has access to the qdev, use the mutex to add
+	 * a reference for later.  This makes sure the usr can't disappear on
+	 * us at the wrong time.  The mutex use in close() system call handling
+	 * makes sure the usr will be valid or complete not exist here.
+	 */
+	mutex_lock(&qdev->users_mutex);
+	list_for_each_entry_safe(usr, u, &qdev->users, node)
+		kref_get(&usr->ref_count);
+	mutex_unlock(&qdev->users_mutex);
+
+	/* remove chardev to prevent new users from coming in */
+	devno = qdev->dev->devt;
+	qdev->dev = NULL;
+	device_destroy(qaic_class, devno);
+	cdev_del(&qdev->cdev);
+	mutex_lock(&qaic_devs_lock);
+	idr_remove(&qaic_devs, MINOR(devno));
+	mutex_unlock(&qaic_devs_lock);
+
+	/* make existing users get unresolvable errors until they close FDs */
+	list_for_each_entry_safe(usr, u, &qdev->users, node) {
+		usr->qdev = NULL;
+		synchronize_srcu(&usr->qdev_lock);
+		kref_put(&usr->ref_count, free_usr);
+	}
+
+	/* start tearing things down */
+	for (i = 0; i < QAIC_NUM_DBC; ++i)
+		release_dbc(qdev, i);
 	qaic_mhi_free_controller(qdev->mhi_cntl, link_up);
 	for (i = 0; i < QAIC_NUM_DBC; ++i) {
 		devm_free_irq(&pdev->dev, pci_irq_vector(pdev, i + 1),
@@ -432,6 +551,7 @@ static void qaic_pci_remove(struct pci_dev *pdev)
 	destroy_workqueue(qdev->cntl_wq);
 	devm_free_irq(&pdev->dev, pci_irq_vector(pdev, 31), qdev);
 	pci_free_irq_vectors(pdev);
+	cancel_work_sync(&qdev->reset_work);
 	iounmap(qdev->bar_0);
 	pci_clear_master(pdev);
 	pci_release_selected_regions(pdev, qdev->bars);
@@ -533,4 +653,4 @@ module_exit(qaic_exit);
 
 MODULE_DESCRIPTION("QTI Cloud AI Accelerators Driver");
 MODULE_LICENSE("GPL v2");
-MODULE_VERSION("1.4.2"); /* MAJOR.MINOR.PATCH */
+MODULE_VERSION("1.4.3"); /* MAJOR.MINOR.PATCH */
