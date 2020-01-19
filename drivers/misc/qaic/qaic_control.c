@@ -595,6 +595,7 @@ static void *msg_xfer(struct qaic_device *qdev, void *in_buf, size_t in_len,
 	long ret;
 
 	elem.seq_num = seq_num;
+	elem.buf = NULL;
 	init_completion(&elem.xfer_done);
 	if (likely(!qdev->cntl_lost_buf)) {
 		out_buf = kmalloc(sizeof(*out_buf), GFP_KERNEL);
@@ -636,16 +637,22 @@ static void *msg_xfer(struct qaic_device *qdev, void *in_buf, size_t in_len,
 	mutex_unlock(&qdev->cntl_mutex);
 
 	ret = wait_for_completion_interruptible_timeout(&elem.xfer_done, 60 * HZ);
-	if (!ret || ret == -ERESTARTSYS) {
-		/*
-		 * not using _interruptable because we have to cleanup or we'll
-		 * likely cause memory corruption
-		 */
-		mutex_lock(&qdev->cntl_mutex);
-		if (!list_empty(&elem.list))
-			list_del(&elem.list);
-		mutex_unlock(&qdev->cntl_mutex);
-		return ERR_PTR(!ret ? -ETIMEDOUT : ret);
+	/*
+	 * not using _interruptable because we have to cleanup or we'll
+	 * likely cause memory corruption
+	 */
+	mutex_lock(&qdev->cntl_mutex);
+	if (!list_empty(&elem.list))
+		list_del(&elem.list);
+	if (!ret && !elem.buf)
+		ret = -ETIMEDOUT;
+	else if (ret > 0 && !elem.buf)
+		ret = -EIO;
+	mutex_unlock(&qdev->cntl_mutex);
+
+	if (ret < 0) {
+		kfree(elem.buf);
+		return ERR_PTR(ret);
 	}
 
 	return elem.buf;
@@ -756,14 +763,12 @@ static void resp_worker(struct work_struct *work)
 		if (elem->seq_num == le32_to_cpu(msg->hdr.sequence_number)) {
 			found = true;
 			list_del_init(&elem->list);
+			elem->buf = msg;
+			complete_all(&elem->xfer_done);
 			break;
 		}
 	}
 	mutex_unlock(&qdev->cntl_mutex);
-	if (found) {
-		elem->buf = msg;
-		complete_all(&elem->xfer_done);
-	}
 
 	if (!found)
 		/* request must have timed out, drop packet */
