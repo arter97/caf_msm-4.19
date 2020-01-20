@@ -7,6 +7,7 @@
 #include <linux/idr.h>
 #include <linux/kref.h>
 #include <linux/list.h>
+#include <linux/moduleparam.h>
 #include <linux/scatterlist.h>
 #include <linux/spinlock.h>
 #include <linux/srcu.h>
@@ -37,6 +38,9 @@
 			((cmd) ? BIT(31) : 0) |				\
 			(((flags) & SEM_INSYNCFENCE) ? BIT(30) : 0) |	\
 			(((flags) & SEM_OUTSYNCFENCE) ? BIT(29) : 0))
+
+static unsigned int wait_exec_default_timeout = 5000; /* 5 sec default */
+module_param(wait_exec_default_timeout, uint, 0600);
 
 struct dbc_req { /* everything must be little endian encoded */
 	u16	req_id;
@@ -829,7 +833,8 @@ int qaic_wait_exec_ioctl(struct qaic_device *qdev, struct qaic_user *usr,
 	/* we don't want the mem handle freed under us in case of deactivate */
 	kref_get(&mem->ref_count);
 	srcu_read_unlock(&qdev->dbc[dbc_id].ch_lock, rcu_id);
-	ret = wait_for_completion_interruptible_timeout(&mem->xfer_done, 5 * HZ);
+	ret = wait_for_completion_interruptible_timeout(&mem->xfer_done,
+				msecs_to_jiffies(wait_exec_default_timeout));
 	rcu_id = srcu_read_lock(&qdev->dbc[dbc_id].ch_lock);
 	if (!ret)
 		ret = -ETIMEDOUT;
