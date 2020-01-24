@@ -589,14 +589,16 @@ static int mhi_uci_probe(struct mhi_device *mhi_dev,
 	mutex_init(&uci_dev->mutex);
 	uci_dev->mhi_dev = mhi_dev;
 
+	mutex_lock(&uci_dev->mutex);
+	mutex_lock(&mhi_uci_drv.lock);
+
 	minor = find_first_zero_bit(uci_minors, MAX_UCI_DEVICES);
 	if (minor >= MAX_UCI_DEVICES) {
+		mutex_unlock(&mhi_uci_drv.lock);
+		mutex_unlock(&uci_dev->mutex);
 		kfree(uci_dev);
 		return -ENOSPC;
 	}
-
-	mutex_lock(&uci_dev->mutex);
-	mutex_lock(&mhi_uci_drv.lock);
 
 	uci_dev->devt = MKDEV(mhi_uci_drv.major, minor);
 	uci_dev->dev = device_create(mhi_uci_drv.class, &mhi_dev->dev,
