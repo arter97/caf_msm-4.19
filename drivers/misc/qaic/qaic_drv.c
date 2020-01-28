@@ -347,8 +347,11 @@ static int qaic_pci_probe(struct pci_dev *pdev,
 	if (ret < 0)
 		goto alloc_irq_fail;
 
-	if (ret < 32)
-		pci_warn(pdev, "%s: Requested 32 MSIs.  Obtained %d MSIs which is less than ideal and may impact performance.\n", __func__, ret);
+	if (ret < 32) {
+		pci_err(pdev, "%s: Requested 32 MSIs.  Obtained %d MSIs which is less than the 32 required.\n", __func__, ret);
+		ret = -ENODEV;
+		goto invalid_msi_config;
+	}
 
 	mhi_irq = pci_irq_vector(pdev, 0);
 	if (mhi_irq < 0) {
@@ -386,6 +389,7 @@ get_dbc_irq_failed:
 		devm_free_irq(&pdev->dev, pci_irq_vector(pdev, i + 1),
 			      &qdev->dbc[i]);
 get_mhi_irq_fail:
+invalid_msi_config:
 	pci_free_irq_vectors(pdev);
 alloc_irq_fail:
 	iounmap(qdev->bar_2);
@@ -527,4 +531,4 @@ module_exit(qaic_exit);
 
 MODULE_DESCRIPTION("QTI Cloud AI Accelerators Driver");
 MODULE_LICENSE("GPL v2");
-MODULE_VERSION("1.3.0"); /* MAJOR.MINOR.PATCH */
+MODULE_VERSION("1.3.1"); /* MAJOR.MINOR.PATCH */
