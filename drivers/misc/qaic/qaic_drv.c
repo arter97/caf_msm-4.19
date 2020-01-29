@@ -595,6 +595,28 @@ static void qaic_pci_remove(struct pci_dev *pdev)
 	kfree(qdev);
 }
 
+static pci_ers_result_t qaic_pci_error_detected(struct pci_dev *pdev,
+						enum pci_channel_state error)
+{
+	return PCI_ERS_RESULT_NEED_RESET;
+}
+
+static void qaic_pci_reset_prepare(struct pci_dev *pdev)
+{
+	struct qaic_device *qdev = pci_get_drvdata(pdev);
+
+	qaic_dev_reset_clean_local_state(qdev);
+	qaic_mhi_link_down(qdev->mhi_cntl);
+}
+
+static void qaic_pci_reset_done(struct pci_dev *pdev)
+{
+	struct qaic_device *qdev = pci_get_drvdata(pdev);
+
+	qdev->in_reset = false;
+	qaic_mhi_link_up(qdev->mhi_cntl);
+}
+
 static const struct mhi_device_id qaic_mhi_match_table[] = {
         { .chan = "QAIC_CONTROL", },
         {},
@@ -618,11 +640,18 @@ static const struct pci_device_id ids[] = {
 };
 MODULE_DEVICE_TABLE(pci, ids);
 
+static const struct pci_error_handlers qaic_pci_err_handler = {
+	.error_detected = qaic_pci_error_detected,
+	.reset_prepare = qaic_pci_reset_prepare,
+	.reset_done = qaic_pci_reset_done,
+};
+
 static struct pci_driver qaic_pci_driver = {
 	.name = QAIC_NAME,
 	.id_table = ids,
 	.probe = qaic_pci_probe,
 	.remove = qaic_pci_remove,
+	/* .err_handler = &qaic_pci_err_handler, TODO fix fw issues first */
 };
 
 static int __init qaic_init(void)
@@ -697,4 +726,4 @@ module_exit(qaic_exit);
 
 MODULE_DESCRIPTION("QTI Cloud AI Accelerators Driver");
 MODULE_LICENSE("GPL v2");
-MODULE_VERSION("1.7.5"); /* MAJOR.MINOR.PATCH */
+MODULE_VERSION("1.7.6"); /* MAJOR.MINOR.PATCH */

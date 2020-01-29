@@ -456,3 +456,19 @@ void qaic_mhi_free_controller(struct mhi_controller *mhi_cntl, bool link_up)
 	kfree(mhi_cntl->irq);
 	mhi_free_controller(mhi_cntl);
 }
+
+void qaic_mhi_link_down(struct mhi_controller *mhi_cntl)
+{
+	mhi_power_down(mhi_cntl, false);
+}
+
+void qaic_mhi_link_up(struct mhi_controller *mhi_cntl)
+{
+	struct pci_dev *pci_dev = container_of(mhi_cntl->dev, struct pci_dev,
+					       dev);
+	int ret;
+
+	ret = mhi_async_power_up(mhi_cntl);
+	if (ret)
+		pci_err(pci_dev, "mhi_async_power_up failed when link came back %d\n", ret);
+}
