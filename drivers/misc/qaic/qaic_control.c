@@ -755,6 +755,7 @@ static void resp_worker(struct work_struct *work)
 
 	if (msg->hdr.magic_number != MANAGE_MAGIC_NUMBER) {
 		kfree(msg);
+		kfree(resp);
 		return;
 	}
 
