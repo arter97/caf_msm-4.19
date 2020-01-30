@@ -78,6 +78,7 @@ struct mem_handle {
 	struct kref		ref_count;
 	struct qaic_device	*qdev;
 	bool			queued;
+	bool			no_xfer;
 };
 
 static int reserve_pages(unsigned long start_pfn, unsigned long nr_pages,
@@ -112,21 +113,33 @@ static int alloc_handle(struct qaic_device *qdev, struct mem_req *req)
 	int nents;
 	int ret;
 
-	if (!req->size ||
-	    !(req->dir == DMA_TO_DEVICE || req->dir == DMA_FROM_DEVICE ||
+	if (!(req->dir == DMA_TO_DEVICE || req->dir == DMA_FROM_DEVICE ||
 	      req->dir == DMA_BIDIRECTIONAL)) {
 		ret = -EINVAL;
 		goto out;
 	}
 
-	nr_pages = DIV_ROUND_UP(req->size, PAGE_SIZE);
-	/* calculate how much extra we are going to allocate, to remove later */
-	buf_extra = (PAGE_SIZE - req->size % PAGE_SIZE) % PAGE_SIZE;
-
 	mem = kmalloc(sizeof(*mem), GFP_KERNEL);
 	if (!mem) {
 		ret = -ENOMEM;
 		goto out;
+	}
+
+	if (req->size) {
+		nr_pages = DIV_ROUND_UP(req->size, PAGE_SIZE);
+		/*
+		 * calculate how much extra we are going to allocate, to remove
+		 * later
+		 */
+		buf_extra = (PAGE_SIZE - req->size % PAGE_SIZE) % PAGE_SIZE;
+		max_order = min(MAX_ORDER, get_order(req->size));
+		mem->no_xfer = false;
+	} else {
+		/* allocate a single page for book keeping */
+		nr_pages = 1;
+		buf_extra = 0;
+		max_order = 0;
+		mem->no_xfer = true;
 	}
 
 	sgt = kmalloc(sizeof(*sgt), GFP_KERNEL);
@@ -142,7 +155,6 @@ static int alloc_handle(struct qaic_device *qdev, struct mem_req *req)
 
 	sg = sgt->sgl;
 	sgt->nents = 0;
-	max_order = min(MAX_ORDER, get_order(req->size));
 
 	/*
 	 * Try to allocate enough pages to cover the request.  High order pages
@@ -392,6 +404,11 @@ int qaic_data_mmap(struct qaic_device *qdev, struct qaic_user *usr,
 		goto release_rcu;
 	}
 
+	if (mem->no_xfer) {
+		ret = -EINVAL;
+		goto release_rcu;
+	}
+
 	for (sg = mem->sgt->sgl; sg; sg = sg_next(sg)) {
 		if (sg_page(sg)) {
 			ret = remap_pfn_range(vma, vma->vm_start + offset,
@@ -422,9 +439,7 @@ static bool invalid_sem(struct sem *sem)
 static int encode_execute(struct qaic_device *qdev, struct mem_handle *mem,
 			  struct execute *exec, u16 req_id)
 {
-	u8 cmd = BULK_XFER | GEN_COMPLETION |
-		 (exec->dir == DMA_TO_DEVICE ? INBOUND_XFER : OUTBOUND_XFER);
-
+	u8 cmd = BULK_XFER | GEN_COMPLETION;
 	u64 db_addr = cpu_to_le64(exec->db_addr);
 	u8 db_len;
 	u32 db_data = cpu_to_le32(exec->db_data);
@@ -432,6 +447,10 @@ static int encode_execute(struct qaic_device *qdev, struct mem_handle *mem,
 	u64 dev_addr;
 	int presync_sem;
 	int i;
+
+	if (!mem->no_xfer)
+		cmd |= (exec->dir == DMA_TO_DEVICE ? INBOUND_XFER :
+								OUTBOUND_XFER);
 
 	req_id = cpu_to_le16(req_id);
 

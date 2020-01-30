@@ -172,6 +172,11 @@ struct wait_exec {
  * The handle to the allocated buffer will be returned in the struct upon
  * success.  A buffer to be freed cannot be accessed after the ioctl is called.
  *
+ * A request for a 0 size buffer is valid.  This signals that the DMA
+ * operation to/from the device does not transfer data, but does perform
+ * other tasks (ring doorbell, etc).  A handle from a zero size request cannot
+ * be mmap()'d.
+ *
  * The return value is 0 for success, or a standard error code.  Some of the
  * possible errors:
  *
