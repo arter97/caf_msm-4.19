@@ -10,6 +10,6 @@ struct mhi_controller *qaic_mhi_register_controller(struct pci_dev *pci_dev,
 						    void *mhi_bar,
 						    int mhi_irq);
 
-void qaic_mhi_free_controller(struct mhi_controller *mhi_cntl);
+void qaic_mhi_free_controller(struct mhi_controller *mhi_cntl, bool link_up);
 
 #endif /* MHICONTROLLERQAIC_H_ */

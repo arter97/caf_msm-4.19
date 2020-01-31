@@ -28,6 +28,7 @@ static int qaic_major;
 static struct class *qaic_class;
 static DEFINE_IDR(qaic_devs);
 static DEFINE_MUTEX(qaic_devs_lock);
+static bool link_up;
 
 static int qaic_device_open(struct inode *inode, struct file *filp);
 static int qaic_device_release(struct inode *inode, struct file *filp);
@@ -422,7 +423,7 @@ static void qaic_pci_remove(struct pci_dev *pdev)
 	if (!qdev)
 		return;
 
-	qaic_mhi_free_controller(qdev->mhi_cntl);
+	qaic_mhi_free_controller(qdev->mhi_cntl, link_up);
 	for (i = 0; i < QAIC_NUM_DBC; ++i) {
 		devm_free_irq(&pdev->dev, pci_irq_vector(pdev, i + 1),
 			      &qdev->dbc[i]);
@@ -519,6 +520,7 @@ out:
 static void __exit qaic_exit(void)
 {
 	pr_debug("qaic: exit\n");
+	link_up = true;
 	pci_unregister_driver(&qaic_pci_driver);
 	mhi_driver_unregister(&qaic_mhi_driver);
 	class_destroy(qaic_class);
@@ -531,4 +533,4 @@ module_exit(qaic_exit);
 
 MODULE_DESCRIPTION("QTI Cloud AI Accelerators Driver");
 MODULE_LICENSE("GPL v2");
-MODULE_VERSION("1.4.1"); /* MAJOR.MINOR.PATCH */
+MODULE_VERSION("1.4.2"); /* MAJOR.MINOR.PATCH */
