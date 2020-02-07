@@ -108,6 +108,7 @@ static int qaic_device_release(struct inode *inode, struct file *filp)
 	struct qaic_device *qdev = usr->qdev;
 	int qdev_rcu_id;
 	int usr_rcu_id;
+	int i;
 
 	usr_rcu_id = srcu_read_lock(&usr->qdev_lock);
 	if (qdev) {
@@ -116,6 +117,10 @@ static int qaic_device_release(struct inode *inode, struct file *filp)
 			pci_dbg(qdev->pdev, "%s pid:%d\n", __func__,
 								current->pid);
 			qaic_release_usr(qdev, usr);
+			for (i = 0; i < QAIC_NUM_DBC; ++i)
+				if (qdev->dbc[i].usr &&
+				    qdev->dbc[i].usr->handle == usr->handle)
+					release_dbc(qdev, i);
 		}
 		srcu_read_unlock(&qdev->dev_lock, qdev_rcu_id);
 
@@ -655,4 +660,4 @@ module_exit(qaic_exit);
 
 MODULE_DESCRIPTION("QTI Cloud AI Accelerators Driver");
 MODULE_LICENSE("GPL v2");
-MODULE_VERSION("1.4.4"); /* MAJOR.MINOR.PATCH */
+MODULE_VERSION("1.4.5"); /* MAJOR.MINOR.PATCH */
