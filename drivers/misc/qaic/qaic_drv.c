@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 
-/* Copyright (c) 2019, The Linux Foundation. All rights reserved. */
+/* Copyright (c) 2019-2020, The Linux Foundation. All rights reserved. */
 
 #include <linux/cdev.h>
 #include <linux/delay.h>
@@ -283,12 +283,19 @@ static int qaic_mhi_probe(struct mhi_device *mhi_dev,
 
 	devno = MKDEV(qaic_major, ret);
 
-	cdev_init(&qdev->cdev, &qaic_ops);
-	qdev->cdev.owner = THIS_MODULE;
-	ret = cdev_add(&qdev->cdev, devno, 1);
+	qdev->cdev = cdev_alloc();
+	if (!qdev->cdev) {
+		pci_dbg(qdev->pdev, "%s: cdev_alloc failed\n", __func__);
+		ret = -ENOMEM;
+		goto free_idr;
+	}
+
+	qdev->cdev->owner = THIS_MODULE;
+	qdev->cdev->ops = &qaic_ops;
+	ret = cdev_add(qdev->cdev, devno, 1);
 	if (ret) {
 		pci_dbg(qdev->pdev, "%s: cdev_add failed %d\n", __func__, ret);
-		goto free_idr;
+		goto free_cdev;
 	}
 
 	qdev->dev = device_create(qaic_class, NULL, devno, NULL,
@@ -308,7 +315,7 @@ static int qaic_mhi_probe(struct mhi_device *mhi_dev,
 	return 0;
 
 free_cdev:
-	cdev_del(&qdev->cdev);
+	cdev_del(qdev->cdev);
 free_idr:
 	mutex_lock(&qaic_devs_lock);
 	idr_remove(&qaic_devs, MINOR(devno));
@@ -533,7 +540,7 @@ static void qaic_pci_remove(struct pci_dev *pdev)
 		devno = qdev->dev->devt;
 		qdev->dev = NULL;
 		device_destroy(qaic_class, devno);
-		cdev_del(&qdev->cdev);
+		cdev_del(qdev->cdev);
 		mutex_lock(&qaic_devs_lock);
 		idr_remove(&qaic_devs, MINOR(devno));
 		mutex_unlock(&qaic_devs_lock);
@@ -660,4 +667,4 @@ module_exit(qaic_exit);
 
 MODULE_DESCRIPTION("QTI Cloud AI Accelerators Driver");
 MODULE_LICENSE("GPL v2");
-MODULE_VERSION("1.4.5"); /* MAJOR.MINOR.PATCH */
+MODULE_VERSION("1.4.6"); /* MAJOR.MINOR.PATCH */

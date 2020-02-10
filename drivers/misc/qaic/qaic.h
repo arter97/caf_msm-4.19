@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only
  *
- * Copyright (c) 2019, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2019-2020, The Linux Foundation. All rights reserved.
  */
 
 #ifndef QAICINTERNAL_H_
@@ -62,7 +62,7 @@ struct qaic_device {
 	u32			next_seq_num;
 	struct mutex		cntl_mutex;
 	bool			cntl_lost_buf;
-	struct cdev		cdev;
+	struct cdev		*cdev;
 	struct device		*dev;
 	struct dma_bridge_chan	dbc[QAIC_NUM_DBC];
 	struct work_struct	reset_work;
