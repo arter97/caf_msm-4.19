@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 
-/* Copyright (c) 2019, The Linux Foundation. All rights reserved. */
+/* Copyright (c) 2019-2020, The Linux Foundation. All rights reserved. */
 
 #include <linux/completion.h>
 #include <linux/dma-mapping.h>
@@ -915,6 +915,8 @@ void release_dbc(struct qaic_device *qdev, u32 dbc_id)
 	qdev->dbc[dbc_id].total_size = 0;
 	qdev->dbc[dbc_id].req_q_base = NULL;
 	qdev->dbc[dbc_id].dma_addr = 0;
+	qdev->dbc[dbc_id].nelem = 0;
+	qdev->dbc[dbc_id].usr = NULL;
 	while (1) {
 		mem = idr_get_next(&qdev->dbc[dbc_id].mem_handles, &next_id);
 		if (!mem)
@@ -927,4 +929,13 @@ void release_dbc(struct qaic_device *qdev, u32 dbc_id)
 			kref_put(&mem->ref_count, free_handle_mem);
 		}
 	}
+}
+
+void qaic_data_get_fifo_info(struct dma_bridge_chan *dbc, u32 *head, u32 *tail)
+{
+	if (!dbc || !head || !tail)
+		return;
+
+	*head = le32_to_cpu(__raw_readl(dbc->dbc_base + REQHP_OFF));
+	*tail = le32_to_cpu(__raw_readl(dbc->dbc_base + REQTP_OFF));
 }

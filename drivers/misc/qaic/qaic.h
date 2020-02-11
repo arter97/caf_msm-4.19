@@ -49,6 +49,7 @@ struct dma_bridge_chan {
 	spinlock_t		xfer_lock;
 	struct list_head	xfer_list;
 	struct srcu_struct	ch_lock;
+	struct dentry		*debugfs_root;
 };
 
 struct qaic_device {
@@ -71,6 +72,7 @@ struct qaic_device {
 	struct srcu_struct	dev_lock;
 	struct list_head	users;
 	struct mutex		users_mutex;
+	struct dentry		*debugfs_root;
 };
 
 int qaic_manage_ioctl(struct qaic_device *qdev, struct qaic_user *usr,
@@ -83,6 +85,8 @@ int qaic_wait_exec_ioctl(struct qaic_device *qdev, struct qaic_user *usr,
 			 unsigned long arg);
 int qaic_data_mmap(struct qaic_device *qdev, struct qaic_user *usr,
 		   struct vm_area_struct *vma);
+void qaic_data_get_fifo_info(struct dma_bridge_chan *dbc, u32 *head,
+			     u32 *tail);
 
 void qaic_mhi_ul_xfer_cb(struct mhi_device *mhi_dev,
 			 struct mhi_result *mhi_result);

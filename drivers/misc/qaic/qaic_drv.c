@@ -17,6 +17,7 @@
 
 #include "mhi_controller.h"
 #include "qaic.h"
+#include "qaic_debugfs.h"
 
 #define PCI_VENDOR_ID_QTI		0x17cb
 
@@ -469,6 +470,7 @@ static int qaic_pci_probe(struct pci_dev *pdev,
 		goto mhi_register_fail;
 	}
 
+	qaic_debugfs_add_pci_device(pdev);
 	pci_dbg(pdev, "%s: successful init\n", __func__);
 	return 0;
 
@@ -557,6 +559,7 @@ static void qaic_pci_remove(struct pci_dev *pdev)
 	for (i = 0; i < QAIC_NUM_DBC; ++i)
 		release_dbc(qdev, i);
 	qaic_mhi_free_controller(qdev->mhi_cntl, link_up);
+	qaic_debugfs_remove_pci_device(pdev);
 	for (i = 0; i < QAIC_NUM_DBC; ++i) {
 		devm_free_irq(&pdev->dev, pci_irq_vector(pdev, i + 1),
 			      &qdev->dbc[i]);
@@ -610,6 +613,9 @@ static int __init qaic_init(void)
 	dev_t dev;
 
 	pr_debug("qaic: init\n");
+
+	qaic_debugfs_init();
+
 	ret = alloc_chrdev_region(&dev, 0, QAIC_MAX_MINORS, QAIC_NAME);
 	if (ret < 0) {
 		pr_debug("qaic: alloc_chrdev_region failed %d\n", ret);
@@ -648,6 +654,9 @@ free_class:
 free_major:
 	unregister_chrdev_region(MKDEV(qaic_major, 0), QAIC_MAX_MINORS);
 out:
+	if (ret)
+		qaic_debugfs_exit();
+
 	return ret;
 }
 
@@ -660,6 +669,7 @@ static void __exit qaic_exit(void)
 	class_destroy(qaic_class);
 	unregister_chrdev_region(MKDEV(qaic_major, 0), QAIC_MAX_MINORS);
 	idr_destroy(&qaic_devs);
+	qaic_debugfs_exit();
 }
 
 module_init(qaic_init);
@@ -667,4 +677,4 @@ module_exit(qaic_exit);
 
 MODULE_DESCRIPTION("QTI Cloud AI Accelerators Driver");
 MODULE_LICENSE("GPL v2");
-MODULE_VERSION("1.4.6"); /* MAJOR.MINOR.PATCH */
+MODULE_VERSION("1.4.7"); /* MAJOR.MINOR.PATCH */
