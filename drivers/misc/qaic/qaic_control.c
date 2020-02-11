@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 
-/* Copyright (c) 2019, The Linux Foundation. All rights reserved. */
+/* Copyright (c) 2019-2020, The Linux Foundation. All rights reserved. */
 
 #include <asm/byteorder.h>
 #include <linux/completion.h>
@@ -145,6 +145,7 @@ static void save_dbc_buf(struct qaic_device *qdev,
 		resources->buf = 0;
 	}
 }
+
 static void free_dbc_buf(struct qaic_device *qdev,
 			 struct ioctl_resources *resources)
 {
@@ -153,6 +154,7 @@ static void free_dbc_buf(struct qaic_device *qdev,
 				  resources->buf, resources->dma_addr);
 	resources->buf = 0;
 }
+
 static void free_dma_xfers(struct qaic_device *qdev,
 			   struct ioctl_resources *resources)
 {
