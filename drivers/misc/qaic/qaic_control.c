@@ -5,6 +5,7 @@
 #include <asm/byteorder.h>
 #include <linux/completion.h>
 #include <linux/dma-mapping.h>
+#include <linux/kref.h>
 #include <linux/list.h>
 #include <linux/mhi.h>
 #include <linux/mm.h>
@@ -40,7 +41,7 @@ struct _msg {
 } __packed;
 
 struct wrapper_msg {
-	bool free_on_xmit;
+	struct kref ref_count;
 	struct _msg msg;
 };
 
@@ -128,6 +129,14 @@ struct resp_work {
 	struct qaic_device *qdev;
 	void *buf;
 };
+
+static void free_wrapper(struct kref *ref)
+{
+	struct wrapper_msg *wrapper = container_of(ref, struct wrapper_msg,
+						   ref_count);
+
+	kfree(wrapper);
+}
 
 static void save_dbc_buf(struct qaic_device *qdev,
 			 struct ioctl_resources *resources,
@@ -589,17 +598,20 @@ static int decode_message(struct qaic_device *qdev, struct manage_msg *user_msg,
 	return 0;
 }
 
-static void *msg_xfer(struct qaic_device *qdev, void *in_buf, size_t in_len,
-		      u32 seq_num, bool nowait)
+static void *msg_xfer(struct qaic_device *qdev, struct wrapper_msg *wrapper,
+		      u32 seq_num)
 {
 	struct xfer_queue_elem elem;
 	struct _msg *out_buf;
+	size_t in_len;
 	long ret;
 
 	if (qdev->in_reset) {
 		mutex_unlock(&qdev->cntl_mutex);
 		return ERR_PTR(-ENODEV);
 	}
+
+	in_len = sizeof(wrapper->msg);
 
 	elem.seq_num = seq_num;
 	elem.buf = NULL;
@@ -627,17 +639,14 @@ static void *msg_xfer(struct qaic_device *qdev, void *in_buf, size_t in_len,
 		qdev->cntl_lost_buf = false;
 	}
 
-	ret = mhi_queue_transfer(qdev->cntl_ch, DMA_TO_DEVICE, in_buf,
+	kref_get(&wrapper->ref_count);
+	ret = mhi_queue_transfer(qdev->cntl_ch, DMA_TO_DEVICE, &wrapper->msg,
 				 in_len, MHI_EOT);
 	if (ret) {
 		qdev->cntl_lost_buf = true;
+		kref_put(&wrapper->ref_count, free_wrapper);
 		mutex_unlock(&qdev->cntl_mutex);
 		return ERR_PTR(ret);
-	}
-
-	if (nowait) {
-		mutex_unlock(&qdev->cntl_mutex);
-		return NULL;
 	}
 
 	list_add_tail(&elem.list, &qdev->cntl_xfer_list);
@@ -701,6 +710,7 @@ int qaic_manage_ioctl(struct qaic_device *qdev, struct qaic_user *usr,
 		goto copy_from_user_failed;
 	}
 
+	kref_init(&wrapper->ref_count);
 	msg = &wrapper->msg;
 
 	ret = encode_message(qdev, user_msg, msg, &resources, usr);
@@ -717,7 +727,7 @@ int qaic_manage_ioctl(struct qaic_device *qdev, struct qaic_user *usr,
 	msg->hdr.handle = cpu_to_le32(usr->handle);
 
 	/* msg_xfer releases the mutex */
-	rsp = msg_xfer(qdev, msg, sizeof(*msg), qdev->next_seq_num - 1, false);
+	rsp = msg_xfer(qdev, wrapper, qdev->next_seq_num - 1);
 	if (IS_ERR(rsp)) {
 		ret = PTR_ERR(rsp);
 		goto lock_failed;
@@ -744,7 +754,7 @@ lock_failed:
 	free_dma_xfers(qdev, &resources);
 	free_dbc_buf(qdev, &resources);
 encode_failed:
-	kfree(wrapper);
+	kref_put(&wrapper->ref_count, free_wrapper);
 copy_from_user_failed:
 	kfree(user_msg);
 out:
@@ -792,8 +802,7 @@ void qaic_mhi_ul_xfer_cb(struct mhi_device *mhi_dev,
 	struct wrapper_msg *wrapper = container_of(msg, struct wrapper_msg,
 						   msg);
 
-	if (wrapper->free_on_xmit)
-		kfree(wrapper);
+	kref_put(&wrapper->ref_count, free_wrapper);
 }
 
 void qaic_mhi_dl_xfer_cb(struct mhi_device *mhi_dev,
@@ -844,8 +853,7 @@ void qaic_release_usr(struct qaic_device *qdev, struct qaic_user *usr)
 	if (!wrapper)
 		return;
 
-	/* MHI callback will free the memory once the xfer is complete */
-	wrapper->free_on_xmit = true;
+	kref_init(&wrapper->ref_count);
 	msg = &wrapper->msg;
 
 	trans = (struct _trans_terminate_to_dev *)msg->data;
@@ -863,12 +871,11 @@ void qaic_release_usr(struct qaic_device *qdev, struct qaic_user *usr)
 
 	/*
 	 * msg_xfer releases the mutex
-	 * Use the nowait option since we don't care about the response.
-	 * If the terminate operation fails, we have no additional recourse
-	 * other than to reset the device, which could disrupt other clients.
-	 * By ignoring the response, we can unblock this client faster.
+	 * We don't care about the return of msg_xfer since we will not do
+	 * anything different based on what happens.
 	 */
-	msg_xfer(qdev, msg, sizeof(*msg), qdev->next_seq_num - 1, true);
+	msg_xfer(qdev, wrapper, qdev->next_seq_num - 1);
+	kref_put(&wrapper->ref_count, free_wrapper);
 }
 
 void wake_all_cntl(struct qaic_device *qdev)
