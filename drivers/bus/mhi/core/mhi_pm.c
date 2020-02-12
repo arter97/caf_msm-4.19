@@ -7,6 +7,7 @@
 #include <linux/dma-direction.h>
 #include <linux/dma-mapping.h>
 #include <linux/interrupt.h>
+#include <linux/iopoll.h>
 #include <linux/list.h>
 #include <linux/of.h>
 #include <linux/module.h>
@@ -926,6 +927,7 @@ int mhi_async_power_up(struct mhi_controller *mhi_cntrl)
 	enum mhi_ee current_ee;
 	enum MHI_ST_TRANSITION next_state;
 	struct mhi_device *mhi_dev = mhi_cntrl->mhi_dev;
+	enum mhi_dev_state state;
 
 	MHI_CNTRL_LOG("Requested to power on\n");
 
@@ -1013,6 +1015,24 @@ int mhi_async_power_up(struct mhi_controller *mhi_cntrl)
 				TO_MHI_EXEC_STR(current_ee));
 		ret = -EIO;
 		goto error_bhi_offset;
+	}
+
+	state = mhi_get_mhi_state(mhi_cntrl);
+	if (state == MHI_STATE_SYS_ERR) {
+		mhi_set_mhi_state(mhi_cntrl, MHI_STATE_RESET);
+		ret = readl_poll_timeout(mhi_cntrl->regs + MHICTRL, val,
+					 !(val & MHICTRL_RESET_MASK), 1000,
+					 mhi_cntrl->timeout_ms * 1000);
+		if (ret) {
+			dev_info(mhi_cntrl->dev, "Failed to reset syserr\n");
+			goto error_bhi_offset;
+		}
+
+		/*
+		 * device cleares INTVEC as part of RESET processing,
+		 * re-program it
+		 */
+		mhi_write_reg(mhi_cntrl, mhi_cntrl->bhi, BHI_INTVEC, 0);
 	}
 
 	/* transition to next state */
