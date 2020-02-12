@@ -18,6 +18,7 @@
 #include "mhi_controller.h"
 #include "qaic.h"
 #include "qaic_debugfs.h"
+#include "qaic_telemetry.h"
 
 #define PCI_VENDOR_ID_QTI		0x17cb
 
@@ -654,6 +655,7 @@ static int __init qaic_init(void)
 		goto free_mhi;
 	}
 
+	qaic_telemetry_register();
 	pr_debug("qaic: init success\n");
 	goto out;
 
@@ -676,6 +678,7 @@ static void __exit qaic_exit(void)
 	link_up = true;
 	pci_unregister_driver(&qaic_pci_driver);
 	mhi_driver_unregister(&qaic_mhi_driver);
+	qaic_telemetry_unregister();
 	class_destroy(qaic_class);
 	unregister_chrdev_region(MKDEV(qaic_major, 0), QAIC_MAX_MINORS);
 	idr_destroy(&qaic_devs);
@@ -687,4 +690,4 @@ module_exit(qaic_exit);
 
 MODULE_DESCRIPTION("QTI Cloud AI Accelerators Driver");
 MODULE_LICENSE("GPL v2");
-MODULE_VERSION("1.4.15"); /* MAJOR.MINOR.PATCH */
+MODULE_VERSION("1.5.0"); /* MAJOR.MINOR.PATCH */
