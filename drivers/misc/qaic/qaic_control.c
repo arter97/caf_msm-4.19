@@ -830,6 +830,39 @@ out:
 	return ret;
 }
 
+int get_cntl_version(struct qaic_device *qdev, struct qaic_user *usr,
+		     u16 *major, u16 *minor)
+{
+	int ret;
+	struct manage_msg *user_msg;
+	struct manage_trans_status_to_dev *status_query;
+	struct manage_trans_status_from_dev *status_result;
+
+	user_msg = kmalloc(sizeof(*user_msg), GFP_KERNEL);
+	if (!user_msg) {
+		ret = -ENOMEM;
+		goto out;
+	}
+	user_msg->len = sizeof(*status_query);
+	user_msg->count = 1;
+
+	status_query = (struct	manage_trans_status_to_dev *)user_msg->data;
+	status_query->hdr.type = TRANS_STATUS_FROM_USR;
+	status_query->hdr.len = sizeof(status_query->hdr);
+
+	ret = qaic_manage(qdev, usr, user_msg);
+	if (ret)
+		goto kfree_user_msg;
+	status_result = (struct	manage_trans_status_from_dev *)user_msg->data;
+	*major = status_result->major;
+	*minor = status_result->minor;
+
+kfree_user_msg:
+	kfree(user_msg);
+out:
+	return ret;
+}
+
 static void resp_worker(struct work_struct *work)
 {
 	struct resp_work *resp = container_of(work, struct resp_work, work);

@@ -75,6 +75,8 @@ struct qaic_device {
 	struct dentry		*debugfs_root;
 };
 
+int get_cntl_version(struct qaic_device *qdev, struct qaic_user *usr,
+		     u16 *major, u16 *minor);
 int qaic_manage_ioctl(struct qaic_device *qdev, struct qaic_user *usr,
 		      unsigned long arg);
 int qaic_mem_ioctl(struct qaic_device *qdev, struct qaic_user *usr,
