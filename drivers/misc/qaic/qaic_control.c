@@ -674,11 +674,10 @@ static void *msg_xfer(struct qaic_device *qdev, struct wrapper_msg *wrapper,
 	return elem.buf;
 }
 
-int qaic_manage_ioctl(struct qaic_device *qdev, struct qaic_user *usr,
-		      unsigned long arg)
+static int qaic_manage(struct qaic_device *qdev, struct qaic_user *usr,
+		      struct manage_msg *user_msg)
 {
 	struct ioctl_resources resources;
-	struct manage_msg *user_msg;
 	struct wrapper_msg *wrapper;
 	struct _msg *msg;
 	struct _msg *rsp;
@@ -686,28 +685,18 @@ int qaic_manage_ioctl(struct qaic_device *qdev, struct qaic_user *usr,
 
 	INIT_LIST_HEAD(&resources.dma_xfers);
 	resources.buf = NULL;
-	user_msg = kmalloc(sizeof(*user_msg), GFP_KERNEL);
-	if (!user_msg) {
-		ret = -ENOMEM;
-		goto out;
-	}
-
-	if (copy_from_user(user_msg, (void __user *)arg, sizeof(*user_msg))) {
-		ret = -EFAULT;
-		goto copy_from_user_failed;
-	}
 
 	if (user_msg->len > MANAGE_MAX_MSG_LENGTH ||
 	    user_msg->count >
 	    MANAGE_MAX_MSG_LENGTH / sizeof(struct manage_trans_hdr)) {
 		ret = -EINVAL;
-		goto copy_from_user_failed;
+		goto out;
 	}
 
 	wrapper = kzalloc(sizeof(*wrapper), GFP_KERNEL);
 	if (!wrapper) {
 		ret = -ENOMEM;
-		goto copy_from_user_failed;
+		goto out;
 	}
 
 	kref_init(&wrapper->ref_count);
@@ -735,11 +724,6 @@ int qaic_manage_ioctl(struct qaic_device *qdev, struct qaic_user *usr,
 
 	ret = decode_message(qdev, user_msg, rsp, &resources);
 
-	if (copy_to_user((void __user *)arg, user_msg, sizeof(*user_msg))) {
-		ret = -EFAULT;
-		goto copy_to_user_failed;
-	}
-
 	free_dma_xfers(qdev, &resources);
 
 	if (resources.status)
@@ -748,13 +732,40 @@ int qaic_manage_ioctl(struct qaic_device *qdev, struct qaic_user *usr,
 		save_dbc_buf(qdev, &resources, usr);
 	ret = 0;
 
-copy_to_user_failed:
 	kfree(rsp);
 lock_failed:
 	free_dma_xfers(qdev, &resources);
 	free_dbc_buf(qdev, &resources);
 encode_failed:
 	kref_put(&wrapper->ref_count, free_wrapper);
+out:
+	return ret;
+}
+
+int qaic_manage_ioctl(struct qaic_device *qdev, struct qaic_user *usr,
+		      unsigned long arg)
+{
+	struct manage_msg *user_msg;
+	int ret;
+
+	user_msg = kmalloc(sizeof(*user_msg), GFP_KERNEL);
+	if (!user_msg) {
+		ret = -ENOMEM;
+		goto out;
+	}
+
+	if (copy_from_user(user_msg, (void __user *)arg, sizeof(*user_msg))) {
+		ret = -EFAULT;
+		goto copy_from_user_failed;
+	}
+
+	ret = qaic_manage(qdev, usr, user_msg);
+	if (ret)
+		goto copy_from_user_failed;
+
+	if (copy_to_user((void __user *)arg, user_msg, sizeof(*user_msg)))
+		ret = -EFAULT;
+
 copy_from_user_failed:
 	kfree(user_msg);
 out:
