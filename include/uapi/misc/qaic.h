@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0 WITH Linux-syscall-note
  *
- * Copyright (c) 2019, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2019-2020, The Linux Foundation. All rights reserved.
  */
 
 #ifndef QAIC_H_
@@ -83,6 +83,17 @@ struct manage_trans_deactivate {
 	struct manage_trans_hdr hdr;
 	__u32 dbc_id; /* Identifier of assigned DMA Bridge channel */
 	__u32 resv;   /* reserved for future use, must be 0 */
+};
+
+struct manage_trans_status_to_dev {
+	struct manage_trans_hdr hdr;
+};
+
+struct manage_trans_status_from_dev {
+	struct manage_trans_hdr hdr;
+	__u16 major;
+	__u16 minor;
+	__u32 status;
 };
 
 struct manage_msg {

@@ -99,6 +99,17 @@ struct _trans_terminate_from_dev {
 	u32 status;
 } __packed;
 
+struct _trans_status_to_dev {
+	struct _trans_hdr hdr;
+} __packed;
+
+struct _trans_status_from_dev {
+	struct _trans_hdr hdr;
+	u16 major;
+	u16 minor;
+	u32 status;
+} __packed;
+
 struct xfer_queue_elem {
 	struct list_head list;
 	u32 seq_num;
@@ -411,6 +422,21 @@ static int encode_deactivate(struct qaic_device *qdev, void *trans,
 	return disable_dbc(qdev, in_trans->dbc_id, usr);
 }
 
+static int encode_status(void *trans, struct _msg *msg, u32 *user_len)
+{
+	struct manage_trans_status_to_dev *in_trans = trans;
+	struct _trans_status_to_dev *out_trans = (void *)msg + msg->hdr.len;
+
+	if (msg->hdr.len + in_trans->hdr.len > sizeof(*msg))
+		return -ENOSPC;
+
+	out_trans->hdr.type = cpu_to_le32(TRANS_STATUS_TO_DEV);
+	out_trans->hdr.len = cpu_to_le32(in_trans->hdr.len);
+	msg->hdr.len += in_trans->hdr.len;
+	*user_len += in_trans->hdr.len;
+
+	return 0;
+}
 static int encode_message(struct qaic_device *qdev, struct manage_msg *user_msg,
 			  struct _msg *msg, struct ioctl_resources *resources,
 			  struct qaic_user *usr)
@@ -448,6 +474,9 @@ static int encode_message(struct qaic_device *qdev, struct manage_msg *user_msg,
 		case TRANS_DEACTIVATE_FROM_USR:
 			ret = encode_deactivate(qdev, trans_hdr, &user_len,
 						usr);
+			break;
+		case TRANS_STATUS_FROM_USR:
+			ret = encode_status(trans_hdr, msg, &user_len);
 			break;
 		default:
 			ret = -EINVAL;
@@ -554,6 +583,29 @@ static int decode_deactivate(struct qaic_device *qdev, void *trans,
 	return 0;
 }
 
+static int decode_status(void *trans, struct manage_msg *user_msg,
+			 u32 *user_len)
+{
+	struct _trans_status_from_dev *in_trans = trans;
+	struct manage_trans_status_from_dev *out_trans;
+	u32 len;
+
+	out_trans = (void *)user_msg->data + user_msg->len;
+
+	len = le32_to_cpu(in_trans->hdr.len);
+	if (user_msg->len + len > MANAGE_MAX_MSG_LENGTH)
+		return -ENOSPC;
+
+	out_trans->hdr.type = le32_to_cpu(TRANS_STATUS_FROM_DEV);
+	out_trans->hdr.len = len;
+	out_trans->major = le32_to_cpu(in_trans->major);
+	out_trans->minor = le32_to_cpu(in_trans->minor);
+	*user_len += in_trans->hdr.len;
+	user_msg->len += len;
+
+	return 0;
+}
+
 static int decode_message(struct qaic_device *qdev, struct manage_msg *user_msg,
 			  struct _msg *msg, struct ioctl_resources *resources)
 {
@@ -583,6 +635,9 @@ static int decode_message(struct qaic_device *qdev, struct manage_msg *user_msg,
 			break;
 		case TRANS_DEACTIVATE_FROM_DEV:
 			ret = decode_deactivate(qdev, trans_hdr, &msg_len);
+			break;
+		case TRANS_STATUS_FROM_DEV:
+			ret = decode_status(trans_hdr, user_msg, &msg_len);
 			break;
 		default:
 			return -EINVAL;
