@@ -577,7 +577,7 @@ static int commit_execute(struct qaic_device *qdev, struct mem_handle *mem,
 	u32 tail = le32_to_cpu(__raw_readl(dbc->dbc_base + REQTP_OFF));
 	u32 avail = head - tail;
 	struct dbc_req *reqs = mem->reqs;
-	bool two_copy;
+	bool two_copy = tail + mem->nents > dbc->nelem;
 
 	if (head == U32_MAX || tail == U32_MAX)
 		/* PCI link error */
@@ -585,8 +585,6 @@ static int commit_execute(struct qaic_device *qdev, struct mem_handle *mem,
 
 	if (head <= tail)
 		avail += dbc->nelem;
-	else
-		two_copy = true;
 
 	--avail;
 
