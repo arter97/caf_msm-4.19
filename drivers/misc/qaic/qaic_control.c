@@ -713,7 +713,10 @@ static int qaic_manage(struct qaic_device *qdev, struct qaic_user *usr,
 	msg->hdr.sequence_number = cpu_to_le32(qdev->next_seq_num++);
 	msg->hdr.len = cpu_to_le32(msg->hdr.len);
 	msg->hdr.count = cpu_to_le32(msg->hdr.count);
-	msg->hdr.handle = cpu_to_le32(usr->handle);
+	if (usr)
+		msg->hdr.handle = cpu_to_le32(usr->handle);
+	else
+		msg->hdr.handle = 0;
 
 	/* msg_xfer releases the mutex */
 	rsp = msg_xfer(qdev, wrapper, qdev->next_seq_num - 1);
