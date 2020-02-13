@@ -26,6 +26,8 @@
 #define QAIC_NAME			"QTI Cloud AI"
 #define QAIC_MAX_MINORS			256
 
+static u16 cntl_major;
+static u16 cntl_minor = 3;
 static int qaic_major;
 static struct class *qaic_class;
 static DEFINE_IDR(qaic_devs);
@@ -247,6 +249,7 @@ static int qaic_mhi_probe(struct mhi_device *mhi_dev,
 	struct qaic_device *qdev;
 	dev_t devno;
 	int ret;
+	u16 major, minor;
 
 	/*
 	 * Invoking this function indicates that the control channel to the
@@ -271,6 +274,13 @@ static int qaic_mhi_probe(struct mhi_device *mhi_dev,
 	if (ret) {
 		pci_dbg(qdev->pdev, "%s: control_open failed %d\n", __func__, ret);
 		goto err;
+	}
+
+	ret = get_cntl_version(qdev, NULL, &major, &minor);
+	if (ret || major != cntl_major || minor > cntl_minor) {
+		pci_dbg(qdev->pdev, "%s: Control protocol version not supported %d\n", __func__, ret);
+		ret = -EINVAL;
+		goto close_control;
 	}
 
 	mutex_lock(&qaic_devs_lock);
@@ -677,4 +687,4 @@ module_exit(qaic_exit);
 
 MODULE_DESCRIPTION("QTI Cloud AI Accelerators Driver");
 MODULE_LICENSE("GPL v2");
-MODULE_VERSION("1.4.13"); /* MAJOR.MINOR.PATCH */
+MODULE_VERSION("1.4.14"); /* MAJOR.MINOR.PATCH */
