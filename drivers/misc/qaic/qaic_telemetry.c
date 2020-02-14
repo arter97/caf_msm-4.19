@@ -63,7 +63,12 @@ static umode_t qaic_is_visible(const void *data, enum hwmon_sensor_types type,
 {
 	switch (type) {
 	case hwmon_power:
-		return 0444;
+		switch (attr) {
+		case hwmon_power_max:
+			return 0644;
+		default:
+			return 0444;
+		}
 	case hwmon_temp:
 		switch (attr) {
 		case hwmon_temp_input: /* fallthrough */
@@ -108,6 +113,8 @@ static int qaic_write(struct device *dev, enum hwmon_sensor_types type,
 		      u32 attr, int channel, long val)
 {
 	switch (type) {
+	case hwmon_power:
+		return 0;
 	case hwmon_temp:
 		return 0;
 	default:
@@ -142,7 +149,7 @@ static const struct hwmon_channel_info qaic_temp = {
 };
 
 static const u32 qaic_config_power[] = {
-	HWMON_P_INPUT, /* board level */
+	HWMON_P_INPUT | HWMON_P_MAX, /* board level */
 	0
 };
 
