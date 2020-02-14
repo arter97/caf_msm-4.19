@@ -64,6 +64,16 @@ static umode_t qaic_is_visible(const void *data, enum hwmon_sensor_types type,
 	switch (type) {
 	case hwmon_power:
 		return 0444;
+	case hwmon_temp:
+		switch (attr) {
+		case hwmon_temp_input: /* fallthrough */
+		case hwmon_temp_highest: /* fallthrough */
+		case hwmon_temp_alarm:
+			return 0444;
+		case hwmon_temp_crit: /* fallthrough */
+		case hwmon_temp_emergency:
+			return 0644;
+		}
 	default:
 		return 0;
 	}
@@ -79,6 +89,16 @@ static int qaic_read(struct device *dev, enum hwmon_sensor_types type,
 	case hwmon_power:
 		*val = 1234 + qdev->next_seq_num;
 		return 0;
+	case hwmon_temp:
+		switch (attr) {
+		case hwmon_temp_alarm:
+			*val = 0;
+			break;
+		default:
+			*val = 21;
+			break;
+		}
+		return 0;
 	default:
 		return -EOPNOTSUPP;
 	}
@@ -87,7 +107,12 @@ static int qaic_read(struct device *dev, enum hwmon_sensor_types type,
 static int qaic_write(struct device *dev, enum hwmon_sensor_types type,
 		      u32 attr, int channel, long val)
 {
-	return -EOPNOTSUPP;
+	switch (type) {
+	case hwmon_temp:
+		return 0;
+	default:
+		return -EOPNOTSUPP;
+	}
 }
 
 static const struct attribute_group *special_groups[] = {
@@ -101,8 +126,23 @@ static const struct hwmon_ops qaic_ops = {
 	.write = qaic_write,
 };
 
+static const u32 qaic_config_temp[] = {
+	/* board level */
+	HWMON_T_INPUT | HWMON_T_HIGHEST,
+	/* SoC level */
+	HWMON_T_INPUT | HWMON_T_HIGHEST | HWMON_T_CRIT | HWMON_T_EMERGENCY,
+	/* DDR level */
+	HWMON_T_ALARM,
+	0
+};
+
+static const struct hwmon_channel_info qaic_temp = {
+	.type = hwmon_temp,
+	.config = qaic_config_temp,
+};
+
 static const u32 qaic_config_power[] = {
-	HWMON_P_INPUT,
+	HWMON_P_INPUT, /* board level */
 	0
 };
 
@@ -112,7 +152,8 @@ static const struct hwmon_channel_info qaic_power = {
 };
 
 static const struct hwmon_channel_info *qaic_info[] = {
-	&qaic_power, /* board level */
+	&qaic_power,
+	&qaic_temp,
 	NULL
 };
 
