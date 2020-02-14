@@ -783,8 +783,8 @@ read_fifo:
 						    mem->sgt->nents,
 						    mem->dir);
 				mem->queued = false;
-				kref_put(&mem->ref_count, free_handle_mem);
 				complete_all(&mem->xfer_done);
+				kref_put(&mem->ref_count, free_handle_mem);
 				break;
 			}
 		}
@@ -920,12 +920,12 @@ void release_dbc(struct qaic_device *qdev, u32 dbc_id)
 		if (!mem)
 			break;
 		idr_remove(&qdev->dbc[dbc_id].mem_handles, next_id);
-		kref_put(&mem->ref_count, free_handle_mem);
 		/* account for the missing put from the irq handler */
 		if (mem->queued) {
 			mem->queued = false;
 			kref_put(&mem->ref_count, free_handle_mem);
 		}
+		kref_put(&mem->ref_count, free_handle_mem);
 	}
 }
 
