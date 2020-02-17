@@ -985,6 +985,7 @@ error_setup_irq:
 		mhi_deinit_dev_ctxt(mhi_cntrl);
 
 error_dev_ctxt:
+	mhi_cntrl->pm_state = MHI_PM_DISABLE;
 	mutex_unlock(&mhi_cntrl->pm_mutex);
 
 	return ret;
@@ -1043,6 +1044,12 @@ void mhi_power_down(struct mhi_controller *mhi_cntrl, bool graceful)
 {
 	enum MHI_PM_STATE cur_state;
 	enum MHI_PM_STATE transition_state = MHI_PM_SHUTDOWN_PROCESS;
+
+	mutex_lock(&mhi_cntrl->pm_mutex);
+        cur_state = mhi_cntrl->pm_state;
+	mutex_unlock(&mhi_cntrl->pm_mutex);
+	if (cur_state == MHI_PM_DISABLE)
+		return; /* Already powered down */
 
 	/* if it's not graceful shutdown, force MHI to a linkdown state */
 	if (!graceful) {
