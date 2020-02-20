@@ -758,9 +758,11 @@ read_fifo:
 	head = le32_to_cpu(__raw_readl(dbc->dbc_base + RSPHP_OFF));
 	tail = le32_to_cpu(__raw_readl(dbc->dbc_base + RSPTP_OFF));
 
-	if (head == U32_MAX || tail == U32_MAX)
+	if (head == U32_MAX || tail == U32_MAX) {
 		/* PCI link error */
+		srcu_read_unlock(&dbc->ch_lock, rcu_id);
 		return IRQ_HANDLED;
+	}
 
 	if (head == tail) { /* queue empty */
 		srcu_read_unlock(&dbc->ch_lock, rcu_id);
