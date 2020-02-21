@@ -690,4 +690,4 @@ module_exit(qaic_exit);
 
 MODULE_DESCRIPTION("QTI Cloud AI Accelerators Driver");
 MODULE_LICENSE("GPL v2");
-MODULE_VERSION("1.7.1"); /* MAJOR.MINOR.PATCH */
+MODULE_VERSION("1.7.2"); /* MAJOR.MINOR.PATCH */

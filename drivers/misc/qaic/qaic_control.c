@@ -947,9 +947,10 @@ void qaic_control_close(struct qaic_device *qdev)
 
 void qaic_release_usr(struct qaic_device *qdev, struct qaic_user *usr)
 {
+	struct _trans_terminate_to_dev *trans;
 	struct wrapper_msg *wrapper;
 	struct _msg *msg;
-	struct _trans_terminate_to_dev *trans;
+	struct _msg *rsp;
 
 	wrapper = kzalloc(sizeof(*wrapper), GFP_KERNEL);
 	if (!wrapper)
@@ -976,7 +977,9 @@ void qaic_release_usr(struct qaic_device *qdev, struct qaic_user *usr)
 	 * We don't care about the return of msg_xfer since we will not do
 	 * anything different based on what happens.
 	 */
-	msg_xfer(qdev, wrapper, qdev->next_seq_num - 1);
+	rsp = msg_xfer(qdev, wrapper, qdev->next_seq_num - 1);
+	if (!IS_ERR(rsp))
+		kfree(rsp);
 	kref_put(&wrapper->ref_count, free_wrapper);
 }
 
