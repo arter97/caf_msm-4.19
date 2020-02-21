@@ -22,6 +22,7 @@
 #define MANAGE_MAGIC_NUMBER	0x43494151 /* "QAIC" in little endian */
 #define QAIC_DBC_Q_GAP		0x100
 #define QAIC_DBC_Q_BUF_ALIGN	0x1000
+#define RESP_TIMEOUT		60 * HZ
 
 /*
  * wire encoding structures for the manage protocol.
@@ -654,7 +655,7 @@ static int decode_message(struct qaic_device *qdev, struct manage_msg *user_msg,
 }
 
 static void *msg_xfer(struct qaic_device *qdev, struct wrapper_msg *wrapper,
-		      u32 seq_num)
+		      u32 seq_num, bool ignore_signal)
 {
 	struct xfer_queue_elem elem;
 	struct _msg *out_buf;
@@ -707,7 +708,12 @@ static void *msg_xfer(struct qaic_device *qdev, struct wrapper_msg *wrapper,
 	list_add_tail(&elem.list, &qdev->cntl_xfer_list);
 	mutex_unlock(&qdev->cntl_mutex);
 
-	ret = wait_for_completion_interruptible_timeout(&elem.xfer_done, 60 * HZ);
+	if (ignore_signal)
+		ret = wait_for_completion_timeout(&elem.xfer_done,
+						  RESP_TIMEOUT);
+	else
+		ret = wait_for_completion_interruptible_timeout(&elem.xfer_done,
+								RESP_TIMEOUT);
 	/*
 	 * not using _interruptable because we have to cleanup or we'll
 	 * likely cause memory corruption
@@ -774,7 +780,7 @@ static int qaic_manage(struct qaic_device *qdev, struct qaic_user *usr,
 		msg->hdr.handle = 0;
 
 	/* msg_xfer releases the mutex */
-	rsp = msg_xfer(qdev, wrapper, qdev->next_seq_num - 1);
+	rsp = msg_xfer(qdev, wrapper, qdev->next_seq_num - 1, false);
 	if (IS_ERR(rsp)) {
 		ret = PTR_ERR(rsp);
 		goto lock_failed;
@@ -976,8 +982,11 @@ void qaic_release_usr(struct qaic_device *qdev, struct qaic_user *usr)
 	 * msg_xfer releases the mutex
 	 * We don't care about the return of msg_xfer since we will not do
 	 * anything different based on what happens.
+	 * We ignore pending signals since one will be set if the user is
+	 * killed, and we need give the device a chance to cleanup, otherwise
+	 * DMA may still be in progress when we return.
 	 */
-	rsp = msg_xfer(qdev, wrapper, qdev->next_seq_num - 1);
+	rsp = msg_xfer(qdev, wrapper, qdev->next_seq_num - 1, true);
 	if (!IS_ERR(rsp))
 		kfree(rsp);
 	kref_put(&wrapper->ref_count, free_wrapper);
