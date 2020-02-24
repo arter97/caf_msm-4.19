@@ -518,17 +518,12 @@ qdev_fail:
 	return ret;
 }
 
-static void qaic_pci_remove(struct pci_dev *pdev)
+static void qaic_dev_reset_clean_local_state(struct qaic_device *qdev)
 {
-	struct qaic_device *qdev = pci_get_drvdata(pdev);
 	struct qaic_user *usr;
 	struct qaic_user *u;
 	dev_t devno;
 	int i;
-
-	pci_dbg(pdev, "%s\n", __func__);
-	if (!qdev)
-		return;
 
 	qdev->in_reset = true;
 	/* wake up any waiters to avoid waiting for timeouts at sync */
@@ -569,6 +564,18 @@ static void qaic_pci_remove(struct pci_dev *pdev)
 	/* start tearing things down */
 	for (i = 0; i < QAIC_NUM_DBC; ++i)
 		release_dbc(qdev, i);
+}
+
+static void qaic_pci_remove(struct pci_dev *pdev)
+{
+	struct qaic_device *qdev = pci_get_drvdata(pdev);
+	int i;
+
+	pci_dbg(pdev, "%s\n", __func__);
+	if (!qdev)
+		return;
+
+	qaic_dev_reset_clean_local_state(qdev);
 	qaic_mhi_free_controller(qdev->mhi_cntl, link_up);
 	qaic_debugfs_remove_pci_device(pdev);
 	for (i = 0; i < QAIC_NUM_DBC; ++i) {
@@ -690,4 +697,4 @@ module_exit(qaic_exit);
 
 MODULE_DESCRIPTION("QTI Cloud AI Accelerators Driver");
 MODULE_LICENSE("GPL v2");
-MODULE_VERSION("1.7.3"); /* MAJOR.MINOR.PATCH */
+MODULE_VERSION("1.7.4"); /* MAJOR.MINOR.PATCH */
