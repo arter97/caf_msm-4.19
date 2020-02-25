@@ -279,7 +279,7 @@ static int qaic_mhi_probe(struct mhi_device *mhi_dev,
 
 	ret = get_cntl_version(qdev, NULL, &major, &minor);
 	if (ret || major != cntl_major || minor > cntl_minor) {
-		pci_dbg(qdev->pdev, "%s: Control protocol version not supported %d\n", __func__, ret);
+		pci_dbg(qdev->pdev, "%s: Control protocol version (%d.%d) not supported.  Supported version is (%d.%d). Ret: %d\n", __func__, major, minor, cntl_major, cntl_minor, ret);
 		ret = -EINVAL;
 		goto close_control;
 	}
@@ -697,4 +697,4 @@ module_exit(qaic_exit);
 
 MODULE_DESCRIPTION("QTI Cloud AI Accelerators Driver");
 MODULE_LICENSE("GPL v2");
-MODULE_VERSION("1.7.4"); /* MAJOR.MINOR.PATCH */
+MODULE_VERSION("1.7.5"); /* MAJOR.MINOR.PATCH */
