@@ -3,6 +3,9 @@
 
 #ifndef _MHI_H_
 #define _MHI_H_
+#include <linux/dma-mapping.h>
+#include <linux/device.h>
+#include <linux/slab.h>
 
 struct mhi_chan;
 struct mhi_event;
