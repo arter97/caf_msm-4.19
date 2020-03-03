@@ -651,7 +651,7 @@ static struct pci_driver qaic_pci_driver = {
 	.id_table = ids,
 	.probe = qaic_pci_probe,
 	.remove = qaic_pci_remove,
-	/* .err_handler = &qaic_pci_err_handler, TODO fix fw issues first */
+	.err_handler = &qaic_pci_err_handler,
 };
 
 static int __init qaic_init(void)
@@ -726,4 +726,4 @@ module_exit(qaic_exit);
 
 MODULE_DESCRIPTION("QTI Cloud AI Accelerators Driver");
 MODULE_LICENSE("GPL v2");
-MODULE_VERSION("1.7.6"); /* MAJOR.MINOR.PATCH */
+MODULE_VERSION("1.7.7"); /* MAJOR.MINOR.PATCH */
