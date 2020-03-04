@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: GPL-2.0-only
 
-/* Copyright (c) 2019, The Linux Foundation. All rights reserved. */
+/* Copyright (c) 2019-2020, The Linux Foundation. All rights reserved. */
 
 #include <linux/err.h>
 #include <linux/memblock.h>
 #include <linux/mhi.h>
 #include <linux/moduleparam.h>
 #include <linux/pci.h>
+
+#include "qaic.h"
 
 static unsigned int mhi_timeout = 20000; /* 20 sec default */
 module_param(mhi_timeout, uint, 0600);
@@ -403,6 +405,11 @@ static void mhi_status_cb(struct mhi_controller *mhi_cntl,
 			  void *priv,
 			  enum MHI_CB reason)
 {
+	struct qaic_device *qdev = (struct qaic_device *)pci_get_drvdata(
+					to_pci_dev(mhi_cntl->dev));
+
+	if (reason == MHI_CB_FATAL_ERROR && !qdev->in_reset)
+		schedule_work(&qdev->reset_mhi_work);
 }
 
 struct mhi_controller *qaic_mhi_register_controller(struct pci_dev *pci_dev,
@@ -495,4 +502,20 @@ void qaic_mhi_link_up(struct mhi_controller *mhi_cntl)
 	ret = mhi_async_power_up(mhi_cntl);
 	if (ret)
 		pci_err(pci_dev, "mhi_async_power_up failed when link came back %d\n", ret);
+}
+
+void qaic_mhi_start_reset(struct mhi_controller *mhi_cntl)
+{
+	mhi_power_down(mhi_cntl, true);
+}
+
+void qaic_mhi_reset_done(struct mhi_controller *mhi_cntl)
+{
+	struct pci_dev *pci_dev = container_of(mhi_cntl->dev, struct pci_dev,
+					       dev);
+	int ret;
+
+	ret = mhi_async_power_up(mhi_cntl);
+	if (ret)
+		pci_err(pci_dev, "mhi_async_power_up failed after reset %d\n", ret);
 }

@@ -342,6 +342,66 @@ static void qaic_mhi_remove(struct mhi_device *mhi_dev)
 {
 }
 
+static void qaic_dev_reset_clean_local_state(struct qaic_device *qdev)
+{
+	struct qaic_user *usr;
+	struct qaic_user *u;
+	dev_t devno;
+	int i;
+
+	qdev->in_reset = true;
+	/* wake up any waiters to avoid waiting for timeouts at sync */
+	wake_all_cntl(qdev);
+	for (i = 0; i < QAIC_NUM_DBC; ++i)
+		wakeup_dbc(qdev, i);
+	synchronize_srcu(&qdev->dev_lock);
+
+	/*
+	 * while the usr still has access to the qdev, use the mutex to add
+	 * a reference for later.  This makes sure the usr can't disappear on
+	 * us at the wrong time.  The mutex use in close() system call handling
+	 * makes sure the usr will be valid or complete not exist here.
+	 */
+	mutex_lock(&qdev->users_mutex);
+	list_for_each_entry_safe(usr, u, &qdev->users, node)
+		kref_get(&usr->ref_count);
+	mutex_unlock(&qdev->users_mutex);
+
+	/* remove chardev to prevent new users from coming in */
+	if (qdev->dev) {
+		devno = qdev->dev->devt;
+		qdev->dev = NULL;
+		device_destroy(qaic_class, devno);
+		cdev_del(qdev->cdev);
+		mutex_lock(&qaic_devs_lock);
+		idr_remove(&qaic_devs, MINOR(devno));
+		mutex_unlock(&qaic_devs_lock);
+	}
+
+	/* make existing users get unresolvable errors until they close FDs */
+	list_for_each_entry_safe(usr, u, &qdev->users, node) {
+		usr->qdev = NULL;
+		synchronize_srcu(&usr->qdev_lock);
+		kref_put(&usr->ref_count, free_usr);
+	}
+
+	/* start tearing things down */
+	for (i = 0; i < QAIC_NUM_DBC; ++i)
+		release_dbc(qdev, i);
+}
+
+static void reset_mhi_work_func(struct work_struct *work)
+{
+	struct qaic_device *qdev;
+
+	qdev = container_of(work, struct qaic_device, reset_mhi_work);
+
+	qaic_dev_reset_clean_local_state(qdev);
+	qaic_mhi_start_reset(qdev->mhi_cntl);
+	qdev->in_reset = false;
+	qaic_mhi_reset_done(qdev->mhi_cntl);
+}
+
 static void reset_work_func(struct work_struct *work)
 {
 	struct qaic_device *qdev;
@@ -392,6 +452,7 @@ static int qaic_pci_probe(struct pci_dev *pdev,
 	mutex_init(&qdev->cntl_mutex);
 	INIT_LIST_HEAD(&qdev->cntl_xfer_list);
 	INIT_WORK(&qdev->reset_work, reset_work_func);
+	INIT_WORK(&qdev->reset_mhi_work, reset_mhi_work_func);
 	init_srcu_struct(&qdev->dev_lock);
 	INIT_LIST_HEAD(&qdev->users);
 	mutex_init(&qdev->users_mutex);
@@ -518,54 +579,6 @@ qdev_fail:
 	return ret;
 }
 
-static void qaic_dev_reset_clean_local_state(struct qaic_device *qdev)
-{
-	struct qaic_user *usr;
-	struct qaic_user *u;
-	dev_t devno;
-	int i;
-
-	qdev->in_reset = true;
-	/* wake up any waiters to avoid waiting for timeouts at sync */
-	wake_all_cntl(qdev);
-	for (i = 0; i < QAIC_NUM_DBC; ++i)
-		wakeup_dbc(qdev, i);
-	synchronize_srcu(&qdev->dev_lock);
-
-	/*
-	 * while the usr still has access to the qdev, use the mutex to add
-	 * a reference for later.  This makes sure the usr can't disappear on
-	 * us at the wrong time.  The mutex use in close() system call handling
-	 * makes sure the usr will be valid or complete not exist here.
-	 */
-	mutex_lock(&qdev->users_mutex);
-	list_for_each_entry_safe(usr, u, &qdev->users, node)
-		kref_get(&usr->ref_count);
-	mutex_unlock(&qdev->users_mutex);
-
-	/* remove chardev to prevent new users from coming in */
-	if (qdev->dev) {
-		devno = qdev->dev->devt;
-		qdev->dev = NULL;
-		device_destroy(qaic_class, devno);
-		cdev_del(qdev->cdev);
-		mutex_lock(&qaic_devs_lock);
-		idr_remove(&qaic_devs, MINOR(devno));
-		mutex_unlock(&qaic_devs_lock);
-	}
-
-	/* make existing users get unresolvable errors until they close FDs */
-	list_for_each_entry_safe(usr, u, &qdev->users, node) {
-		usr->qdev = NULL;
-		synchronize_srcu(&usr->qdev_lock);
-		kref_put(&usr->ref_count, free_usr);
-	}
-
-	/* start tearing things down */
-	for (i = 0; i < QAIC_NUM_DBC; ++i)
-		release_dbc(qdev, i);
-}
-
 static void qaic_pci_remove(struct pci_dev *pdev)
 {
 	struct qaic_device *qdev = pci_get_drvdata(pdev);
@@ -576,6 +589,7 @@ static void qaic_pci_remove(struct pci_dev *pdev)
 		return;
 
 	qaic_dev_reset_clean_local_state(qdev);
+	cancel_work_sync(&qdev->reset_mhi_work);
 	qaic_mhi_free_controller(qdev->mhi_cntl, link_up);
 	qaic_debugfs_remove_pci_device(pdev);
 	for (i = 0; i < QAIC_NUM_DBC; ++i) {
@@ -726,4 +740,4 @@ module_exit(qaic_exit);
 
 MODULE_DESCRIPTION("QTI Cloud AI Accelerators Driver");
 MODULE_LICENSE("GPL v2");
-MODULE_VERSION("1.7.7"); /* MAJOR.MINOR.PATCH */
+MODULE_VERSION("1.7.8"); /* MAJOR.MINOR.PATCH */
