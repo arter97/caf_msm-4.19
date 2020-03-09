@@ -81,6 +81,16 @@ struct mem_handle {
 	bool			no_xfer;
 };
 
+inline int get_dbc_req_elem_size(void)
+{
+	return sizeof(struct dbc_req);
+}
+
+inline int get_dbc_rsp_elem_size(void)
+{
+	return sizeof(struct dbc_rsp);
+}
+
 static int reserve_pages(unsigned long start_pfn, unsigned long nr_pages,
 			 bool reserve)
 {
@@ -594,14 +604,14 @@ static int commit_execute(struct qaic_device *qdev, struct mem_handle *mem,
 	if (two_copy) {
 		avail = dbc->nelem - tail;
 		avail = min_t(u32, avail, mem->nents);
-		memcpy(dbc->req_q_base + tail * QAIC_DBC_REQ_ELEM_SIZE,
+		memcpy(dbc->req_q_base + tail * get_dbc_req_elem_size(),
 		       reqs, sizeof(*reqs) * avail);
 		reqs += avail;
 		avail = mem->nents - avail;
 		if (avail)
 			memcpy(dbc->req_q_base, reqs, sizeof(*reqs) * avail);
 	} else {
-		memcpy(dbc->req_q_base + tail * QAIC_DBC_REQ_ELEM_SIZE,
+		memcpy(dbc->req_q_base + tail * get_dbc_req_elem_size(),
 		       reqs, sizeof(*reqs) * mem->nents);
 	}
 

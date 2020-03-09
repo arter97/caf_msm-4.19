@@ -377,8 +377,8 @@ static int encode_activate(struct qaic_device *qdev, void *trans,
 		return -EINVAL;
 
 	nelem = in_trans->queue_size;
-	size = (QAIC_DBC_REQ_ELEM_SIZE + QAIC_DBC_RSP_ELEM_SIZE) * nelem;
-	if (size / nelem != QAIC_DBC_REQ_ELEM_SIZE + QAIC_DBC_RSP_ELEM_SIZE)
+	size = (get_dbc_req_elem_size() + get_dbc_rsp_elem_size()) * nelem;
+	if (size / nelem != get_dbc_req_elem_size() + get_dbc_rsp_elem_size())
 		return -EINVAL;
 
 	if (size + QAIC_DBC_Q_GAP + QAIC_DBC_Q_BUF_ALIGN < size)
@@ -396,7 +396,7 @@ static int encode_activate(struct qaic_device *qdev, void *trans,
 	out_trans->req_q_addr = cpu_to_le64(dma_addr);
 	out_trans->req_q_size = cpu_to_le32(nelem);
 	out_trans->rsp_q_addr = cpu_to_le64(dma_addr + size - nelem *
-							QAIC_DBC_RSP_ELEM_SIZE);
+							get_dbc_rsp_elem_size());
 	out_trans->rsp_q_size = cpu_to_le32(nelem);
 
 	*user_len += in_trans->hdr.len;
@@ -406,7 +406,7 @@ static int encode_activate(struct qaic_device *qdev, void *trans,
 	resources->dma_addr = dma_addr;
 	resources->total_size = size;
 	resources->nelem = nelem;
-	resources->rsp_q_base = buf + size - nelem * QAIC_DBC_RSP_ELEM_SIZE;
+	resources->rsp_q_base = buf + size - nelem * get_dbc_rsp_elem_size();
 	return 0;
 }
 

@@ -18,8 +18,6 @@
 #include <linux/workqueue.h>
 
 #define QAIC_NUM_DBC		16
-#define QAIC_DBC_REQ_ELEM_SIZE	0x40
-#define QAIC_DBC_RSP_ELEM_SIZE	0x4
 #define QAIC_DBC_BASE		0x20000
 #define QAIC_DBC_SIZE		0x1000
 
@@ -84,6 +82,8 @@ struct qaic_device {
 	struct workqueue_struct	*tele_wq;
 };
 
+int get_dbc_req_elem_size(void);
+int get_dbc_rsp_elem_size(void);
 int get_cntl_version(struct qaic_device *qdev, struct qaic_user *usr,
 		     u16 *major, u16 *minor);
 int qaic_manage_ioctl(struct qaic_device *qdev, struct qaic_user *usr,
