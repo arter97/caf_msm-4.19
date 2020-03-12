@@ -524,7 +524,8 @@ static int decode_passthrough(void *trans, struct qaic_manage_msg *user_msg,
 
 static int decode_activate(struct qaic_device *qdev, void *trans,
 			   struct qaic_manage_msg *user_msg, u32 *msg_len,
-			   struct ioctl_resources *resources)
+			   struct ioctl_resources *resources,
+			   struct qaic_user *usr)
 {
 	struct _trans_activate_from_dev *in_trans = trans;
 	struct qaic_manage_trans_activate_from_dev *out_trans;
@@ -556,6 +557,8 @@ static int decode_activate(struct qaic_device *qdev, void *trans,
 
 	resources->status = out_trans->status;
 	resources->dbc_id = out_trans->dbc_id;
+	if (!resources->status)
+		save_dbc_buf(qdev, resources, usr);
 	return 0;
 }
 
@@ -610,7 +613,8 @@ static int decode_status(void *trans, struct qaic_manage_msg *user_msg,
 
 static int decode_message(struct qaic_device *qdev,
 			  struct qaic_manage_msg *user_msg, struct _msg *msg,
-			  struct ioctl_resources *resources)
+			  struct ioctl_resources *resources,
+			  struct qaic_user *usr)
 {
 	struct _trans_hdr *trans_hdr;
 	u32 msg_len = 0;
@@ -634,7 +638,7 @@ static int decode_message(struct qaic_device *qdev,
 			break;
 		case TRANS_ACTIVATE_FROM_DEV:
 			ret = decode_activate(qdev, trans_hdr, user_msg,
-					      &msg_len, resources);
+					      &msg_len, resources, usr);
 			break;
 		case TRANS_DEACTIVATE_FROM_DEV:
 			ret = decode_deactivate(qdev, trans_hdr, &msg_len);
@@ -788,15 +792,7 @@ static int qaic_manage(struct qaic_device *qdev, struct qaic_user *usr,
 		goto lock_failed;
 	}
 
-	ret = decode_message(qdev, user_msg, rsp, &resources);
-
-	free_dma_xfers(qdev, &resources);
-
-	if (resources.status)
-		free_dbc_buf(qdev, &resources);
-	else
-		save_dbc_buf(qdev, &resources, usr);
-	ret = 0;
+	ret = decode_message(qdev, user_msg, rsp, &resources, usr);
 
 	kfree(rsp);
 lock_failed:
