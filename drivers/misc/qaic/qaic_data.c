@@ -13,6 +13,7 @@
 #include <linux/srcu.h>
 #include <linux/types.h>
 #include <linux/uaccess.h>
+#include <linux/wait.h>
 #include <uapi/misc/qaic.h>
 
 #include "qaic.h"
@@ -939,6 +940,8 @@ void release_dbc(struct qaic_device *qdev, u32 dbc_id)
 		}
 		kref_put(&mem->ref_count, free_handle_mem);
 	}
+	qdev->dbc[dbc_id].in_use = false;
+	wake_up(&qdev->dbc[dbc_id].dbc_release);
 }
 
 void qaic_data_get_fifo_info(struct dma_bridge_chan *dbc, u32 *head, u32 *tail)

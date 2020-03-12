@@ -15,6 +15,7 @@
 #include <linux/pci.h>
 #include <linux/spinlock.h>
 #include <linux/srcu.h>
+#include <linux/wait.h>
 #include <linux/workqueue.h>
 
 #define QAIC_NUM_DBC		16
@@ -49,6 +50,8 @@ struct dma_bridge_chan {
 	struct list_head	xfer_list;
 	struct srcu_struct	ch_lock;
 	struct dentry		*debugfs_root;
+	bool			in_use;
+	wait_queue_head_t	dbc_release;
 };
 
 struct qaic_device {
