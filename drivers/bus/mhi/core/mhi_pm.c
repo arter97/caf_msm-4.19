@@ -11,6 +11,7 @@
 #include <linux/list.h>
 #include <linux/of.h>
 #include <linux/module.h>
+#include <linux/sched.h>
 #include <linux/slab.h>
 #include <linux/wait.h>
 #include <linux/mhi.h>
