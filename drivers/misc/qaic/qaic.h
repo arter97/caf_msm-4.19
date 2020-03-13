@@ -109,4 +109,5 @@ void wakeup_dbc(struct qaic_device *qdev, u32 dbc_id);
 void release_dbc(struct qaic_device *qdev, u32 dbc_id);
 
 void wake_all_cntl(struct qaic_device *qdev);
+void qaic_dev_reset_clean_local_state(struct qaic_device *qdev);
 #endif /* QAICINTERNAL_H_ */

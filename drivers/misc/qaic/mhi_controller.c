@@ -408,8 +408,12 @@ static void mhi_status_cb(struct mhi_controller *mhi_cntl,
 	struct qaic_device *qdev = (struct qaic_device *)pci_get_drvdata(
 					to_pci_dev(mhi_cntl->dev));
 
+	/* this event occurs in atomic context */
 	if (reason == MHI_CB_FATAL_ERROR && !qdev->in_reset)
 		schedule_work(&qdev->reset_mhi_work);
+	/* this event occurs in non-atomic context */
+	if (reason == MHI_CB_SYS_ERROR && !qdev->in_reset)
+		qaic_dev_reset_clean_local_state(qdev);
 }
 
 struct mhi_controller *qaic_mhi_register_controller(struct pci_dev *pci_dev,
