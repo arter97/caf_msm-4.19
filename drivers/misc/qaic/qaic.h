@@ -8,6 +8,7 @@
 
 #include <linux/cdev.h>
 #include <linux/idr.h>
+#include <linux/interrupt.h>
 #include <linux/kref.h>
 #include <linux/mhi.h>
 #include <linux/mutex.h>

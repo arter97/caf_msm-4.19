@@ -9,8 +9,10 @@
 #include <linux/kref.h>
 #include <linux/mhi.h>
 #include <linux/module.h>
+#include <linux/msi.h>
 #include <linux/mutex.h>
 #include <linux/pci.h>
+#include <linux/sched.h>
 #include <linux/spinlock.h>
 #include <linux/workqueue.h>
 #include <uapi/misc/qaic.h>
