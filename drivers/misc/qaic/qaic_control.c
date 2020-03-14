@@ -650,7 +650,7 @@ static int decode_message(struct qaic_device *qdev,
 			return ret;
 	}
 
-	if (msg_len != trans_hdr->len)
+	if (msg_len != (msg->hdr.len - sizeof(msg->hdr)))
 		return -EINVAL;
 
 	return 0;
