@@ -308,8 +308,7 @@ static int free_handle(struct qaic_device *qdev, struct mem_req *req)
 		if (mem->queued)
 			ret = -EINVAL;
 		else
-			mem = idr_remove(&qdev->dbc[dbc_id].mem_handles,
-					 handle);
+			idr_remove(&qdev->dbc[dbc_id].mem_handles, handle);
 		spin_unlock_irqrestore(&qdev->dbc[dbc_id].xfer_lock, flags);
 	} else {
 		ret = -ENODEV;
