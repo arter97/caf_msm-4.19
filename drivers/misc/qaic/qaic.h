@@ -76,6 +76,12 @@ struct qaic_device {
 	struct mutex		users_mutex;
 	struct dentry		*debugfs_root;
 	struct device		*hwmon;
+	struct mhi_device	*tele_ch;
+	struct list_head	tele_xfer_list;
+	u32			tele_next_seq_num;
+	struct mutex		tele_mutex;
+	bool			tele_lost_buf;
+	struct workqueue_struct	*tele_wq;
 };
 
 int get_cntl_version(struct qaic_device *qdev, struct qaic_user *usr,

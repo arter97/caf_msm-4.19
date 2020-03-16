@@ -355,6 +355,7 @@ void qaic_dev_reset_clean_local_state(struct qaic_device *qdev)
 	qdev->in_reset = true;
 	/* wake up any waiters to avoid waiting for timeouts at sync */
 	wake_all_cntl(qdev);
+	wake_all_telemetry(qdev);
 	for (i = 0; i < QAIC_NUM_DBC; ++i)
 		wakeup_dbc(qdev, i);
 	synchronize_srcu(&qdev->dev_lock);
@@ -450,6 +451,11 @@ static int qaic_pci_probe(struct pci_dev *pdev,
 		ret = -ENOMEM;
 		goto wq_fail;
 	}
+	qdev->tele_wq = alloc_workqueue("qaic_tele", WQ_UNBOUND, 0);
+	if (!qdev->tele_wq) {
+		ret = -ENOMEM;
+		goto tele_wq_fail;
+	}
 	pci_set_drvdata(pdev, qdev);
 	qdev->pdev = pdev;
 	mutex_init(&qdev->cntl_mutex);
@@ -459,6 +465,8 @@ static int qaic_pci_probe(struct pci_dev *pdev,
 	init_srcu_struct(&qdev->dev_lock);
 	INIT_LIST_HEAD(&qdev->users);
 	mutex_init(&qdev->users_mutex);
+	mutex_init(&qdev->tele_mutex);
+	INIT_LIST_HEAD(&qdev->tele_xfer_list);
 	for (i = 0; i < QAIC_NUM_DBC; ++i) {
 		mutex_init(&qdev->dbc[i].mem_lock);
 		spin_lock_init(&qdev->dbc[i].xfer_lock);
@@ -575,6 +583,8 @@ bar_fail:
 	for (i = 0; i < QAIC_NUM_DBC; ++i)
 		cleanup_srcu_struct(&qdev->dbc[i].ch_lock);
 	cleanup_srcu_struct(&qdev->dev_lock);
+	destroy_workqueue(qdev->tele_wq);
+tele_wq_fail:
 	destroy_workqueue(qdev->cntl_wq);
 wq_fail:
 	kfree(qdev);
@@ -601,6 +611,7 @@ static void qaic_pci_remove(struct pci_dev *pdev)
 		cleanup_srcu_struct(&qdev->dbc[i].ch_lock);
 	}
 	destroy_workqueue(qdev->cntl_wq);
+	destroy_workqueue(qdev->tele_wq);
 	devm_free_irq(&pdev->dev, pci_irq_vector(pdev, 31), qdev);
 	pci_free_irq_vectors(pdev);
 	cancel_work_sync(&qdev->reset_work);
@@ -743,4 +754,4 @@ module_exit(qaic_exit);
 
 MODULE_DESCRIPTION("QTI Cloud AI Accelerators Driver");
 MODULE_LICENSE("GPL v2");
-MODULE_VERSION("1.7.11"); /* MAJOR.MINOR.PATCH */
+MODULE_VERSION("1.7.12"); /* MAJOR.MINOR.PATCH */

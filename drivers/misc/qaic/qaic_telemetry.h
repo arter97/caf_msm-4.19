@@ -6,6 +6,9 @@
 #ifndef __QAIC_TELEMETRY_H__
 #define __QAIC_TELEMETRY_H__
 
+#include "qaic.h"
+
 void qaic_telemetry_register(void);
 void qaic_telemetry_unregister(void);
+void wake_all_telemetry(struct qaic_device *qdev);
 #endif /* __QAIC_TELEMETRY_H__ */
