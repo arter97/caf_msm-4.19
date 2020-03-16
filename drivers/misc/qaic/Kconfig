@@ -18,3 +18,13 @@ config QAIC
 
 	  To compile this driver as a module, choose M here: the
 	  module will be called qaic.
+
+config QAIC_HWMON
+	bool "Qualcomm Cloud AI 100 accelerator telemetry"
+	depends on QAIC
+	depends on HWMON
+	help
+	  Enables telemetry via the HWMON interface for Qualcomm's Cloud AI
+	  100 accelerator PCIe cards.
+
+	  If unsure, say N.

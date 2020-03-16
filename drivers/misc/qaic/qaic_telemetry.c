@@ -9,6 +9,8 @@
 
 #include "qaic.h"
 
+#ifdef CONFIG_QAIC_HWMON
+
 static ssize_t throttle_percent_show(struct device *dev,
 				     struct device_attribute *a, char *buf)
 {
@@ -237,3 +239,15 @@ void qaic_telemetry_unregister(void)
 {
 	mhi_driver_unregister(&qaic_telemetry_mhi_driver);
 }
+
+#else
+
+void qaic_telemetry_register(void)
+{
+}
+
+void qaic_telemetry_unregister(void)
+{
+}
+
+#endif /* CONFIG_QAIC_HWMON */
