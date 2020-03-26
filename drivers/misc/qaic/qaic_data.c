@@ -100,7 +100,7 @@ static int reserve_pages(unsigned long start_pfn, unsigned long nr_pages,
 	return 0;
 }
 
-static int alloc_handle(struct qaic_device *qdev, struct mem_req *req)
+static int alloc_handle(struct qaic_device *qdev, struct qaic_mem_req *req)
 {
 	struct mem_handle *mem;
 	struct scatterlist *sg;
@@ -281,7 +281,7 @@ static void free_handle_mem(struct kref *kref)
 	kfree(mem);
 }
 
-static int free_handle(struct qaic_device *qdev, struct mem_req *req)
+static int free_handle(struct qaic_device *qdev, struct qaic_mem_req *req)
 {
 	struct mem_handle *mem;
 	unsigned long flags;
@@ -328,7 +328,7 @@ lock_fail:
 int qaic_mem_ioctl(struct qaic_device *qdev, struct qaic_user *usr,
 		   unsigned long arg)
 {
-	struct mem_req req;
+	struct qaic_mem_req req;
 	int rcu_id;
 	int ret;
 
@@ -425,7 +425,7 @@ out:
 	return ret;
 }
 
-static bool invalid_sem(struct sem *sem)
+static bool invalid_sem(struct qaic_sem *sem)
 {
 	if (sem->val & ~SEM_VAL_MASK || sem->index & ~SEM_INDEX_MASK ||
 	    !(sem->presync == 0 || sem->presync == 1) || sem->resv ||
@@ -436,7 +436,7 @@ static bool invalid_sem(struct sem *sem)
 }
 
 static int encode_execute(struct qaic_device *qdev, struct mem_handle *mem,
-			  struct execute *exec, u16 req_id)
+			  struct qaic_execute *exec, u16 req_id)
 {
 	u8 cmd = BULK_XFER;
 	u64 db_addr = cpu_to_le64(exec->db_addr);
@@ -616,7 +616,7 @@ int qaic_execute_ioctl(struct qaic_device *qdev, struct qaic_user *usr,
 		       unsigned long arg)
 {
 	struct mem_handle *mem;
-	struct execute *exec;
+	struct qaic_execute *exec;
 	unsigned long flags;
 	bool queued;
 	u16 req_id;
@@ -803,7 +803,7 @@ int qaic_wait_exec_ioctl(struct qaic_device *qdev, struct qaic_user *usr,
 			 unsigned long arg)
 {
 	struct mem_handle *mem;
-	struct wait_exec *wait;
+	struct qaic_wait_exec *wait;
 	int handle;
 	int dbc_id;
 	int rcu_id;

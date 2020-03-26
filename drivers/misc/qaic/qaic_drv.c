@@ -179,7 +179,7 @@ static long qaic_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 	switch (nr) {
 	case QAIC_IOCTL_MANAGE_NR:
 		if (_IOC_DIR(cmd) != (_IOC_READ | _IOC_WRITE) ||
-		    _IOC_SIZE(cmd) != sizeof(struct manage_msg)) {
+		    _IOC_SIZE(cmd) != sizeof(struct qaic_manage_msg)) {
 			ret = -EINVAL;
 			break;
 		}
@@ -187,7 +187,7 @@ static long qaic_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		break;
 	case QAIC_IOCTL_MEM_NR:
 		if (_IOC_DIR(cmd) != (_IOC_READ | _IOC_WRITE) ||
-		    _IOC_SIZE(cmd) != sizeof(struct mem_req)) {
+		    _IOC_SIZE(cmd) != sizeof(struct qaic_mem_req)) {
 			ret = -EINVAL;
 			break;
 		}
@@ -195,7 +195,7 @@ static long qaic_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		break;
 	case QAIC_IOCTL_EXECUTE_NR:
 		if (_IOC_DIR(cmd) != _IOC_WRITE ||
-		    _IOC_SIZE(cmd) != sizeof(struct execute)) {
+		    _IOC_SIZE(cmd) != sizeof(struct qaic_execute)) {
 			ret = -EINVAL;
 			break;
 		}
@@ -203,7 +203,7 @@ static long qaic_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		break;
 	case QAIC_IOCTL_WAIT_EXEC_NR:
 		if (_IOC_DIR(cmd) != _IOC_WRITE ||
-		    _IOC_SIZE(cmd) != sizeof(struct wait_exec)) {
+		    _IOC_SIZE(cmd) != sizeof(struct qaic_wait_exec)) {
 			ret = -EINVAL;
 			break;
 		}
@@ -754,4 +754,4 @@ module_exit(qaic_exit);
 
 MODULE_DESCRIPTION("QTI Cloud AI Accelerators Driver");
 MODULE_LICENSE("GPL v2");
-MODULE_VERSION("1.7.13"); /* MAJOR.MINOR.PATCH */
+MODULE_VERSION("2.0.0"); /* MAJOR.MINOR.PATCH */

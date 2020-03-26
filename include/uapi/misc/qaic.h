@@ -9,14 +9,14 @@
 #include <linux/ioctl.h>
 #include <linux/types.h>
 
-#define MANAGE_MAX_MSG_LENGTH 16364
+#define QAIC_MANAGE_MAX_MSG_LENGTH 16364
 
-enum sem_flags {
+enum qaic_sem_flags {
 	SEM_INSYNCFENCE =	0x1,
 	SEM_OUTSYNCFENCE =	0x2,
 };
 
-enum sem_cmd {
+enum qaic_sem_cmd {
 	SEM_NOP =		0,
 	SEM_INIT =		1,
 	SEM_INC =		2,
@@ -26,7 +26,7 @@ enum sem_cmd {
 	SEM_WAIT_GT_0 =		6, /* Greater than 0 */
 };
 
-enum manage_transaction_type {
+enum qaic_manage_transaction_type {
 	TRANS_UNDEFINED =		0,
 	TRANS_PASSTHROUGH_FROM_USR =	1,
 	TRANS_PASSTHROUGH_TO_USR =	2,
@@ -48,61 +48,61 @@ enum manage_transaction_type {
 	TRANS_MAX =			18
 };
 
-struct manage_trans_hdr {
+struct qaic_manage_trans_hdr {
 	__u32 type; /* value from enum manage_transaction_type */
 	__u32 len;  /* length of this transaction, including the header */
 };
 
-struct manage_trans_passthrough {
-	struct manage_trans_hdr hdr;
+struct qaic_manage_trans_passthrough {
+	struct qaic_manage_trans_hdr hdr;
 	u8 data[0]; /* userspace must encode in little endian */
 };
 
-struct manage_trans_dma_xfer {
-	struct manage_trans_hdr hdr;
+struct qaic_manage_trans_dma_xfer {
+	struct qaic_manage_trans_hdr hdr;
 	__u32 tag;
 	__u32 count;
 	__u64 addr;
 	__u64 size;
 };
 
-struct manage_trans_activate_to_dev {
-	struct manage_trans_hdr hdr;
+struct qaic_manage_trans_activate_to_dev {
+	struct qaic_manage_trans_hdr hdr;
 	__u32 queue_size; /* in number of elements */
 	__u32 eventfd;
 	__u64 resv; /* reserved for future use, must be 0 */
 };
 
-struct manage_trans_activate_from_dev {
-	struct manage_trans_hdr hdr;
+struct qaic_manage_trans_activate_from_dev {
+	struct qaic_manage_trans_hdr hdr;
 	__u32 status;
 	__u32 dbc_id; /* Identifier of assigned DMA Bridge channel */
 };
 
-struct manage_trans_deactivate {
-	struct manage_trans_hdr hdr;
+struct qaic_manage_trans_deactivate {
+	struct qaic_manage_trans_hdr hdr;
 	__u32 dbc_id; /* Identifier of assigned DMA Bridge channel */
 	__u32 resv;   /* reserved for future use, must be 0 */
 };
 
-struct manage_trans_status_to_dev {
-	struct manage_trans_hdr hdr;
+struct qaic_manage_trans_status_to_dev {
+	struct qaic_manage_trans_hdr hdr;
 };
 
-struct manage_trans_status_from_dev {
-	struct manage_trans_hdr hdr;
+struct qaic_manage_trans_status_from_dev {
+	struct qaic_manage_trans_hdr hdr;
 	__u16 major;
 	__u16 minor;
 	__u32 status;
 };
 
-struct manage_msg {
+struct qaic_manage_msg {
 	__u32 len;   /* Length of valid data - ie sum of all transactions */
 	__u32 count; /* Number of transactions in message */
-	__u8 data[MANAGE_MAX_MSG_LENGTH];
+	__u8 data[QAIC_MANAGE_MAX_MSG_LENGTH];
 };
 
-struct mem_req {
+struct qaic_mem_req {
 	__u64 handle; /* 0 to alloc, or a valid handle to free */
 	__u64 size;   /* size to alloc, will be rounded to PAGE_SIZE */
 	__u32 dir;    /* direction of data: 0 = bidirectional data,
@@ -111,7 +111,7 @@ struct mem_req {
 	__u64 resv;   /* reserved for future use, must be 0 */
 };
 
-struct sem { /* semaphore command */
+struct qaic_sem { /* semaphore command */
 	__u16 val;     /* only lower 12 bits are valid */
 	__u8  index;   /* only lower 5 bits are valid */
 	__u8  presync; /* 1 if presync operation, 0 if postsync */
@@ -120,7 +120,7 @@ struct sem { /* semaphore command */
 	__u16 resv;    /* reserved for future use, must be 0 */
 };
 
-struct execute {
+struct qaic_execute {
 	__u16		ver;    /* struct version, must be 1 */
 	__u8		dir;    /* 1 = to device, 2 = from device */
 	__u8		db_len; /* doorbell length - 32, 16, or 8 bits. 0 means
@@ -131,13 +131,13 @@ struct execute {
 	__u64		dev_addr;
 	__u32		dbc_id; /* Identifier of assigned DMA Bridge channel */
 	__u32		resv;   /* reserved for future use, must be 0 */
-	struct sem	sem0;   /* Must be zero if not valid */
-	struct sem	sem1;   /* Must be zero if not valid */
-	struct sem	sem2;   /* Must be zero if not valid */
-	struct sem	sem3;   /* Must be zero if not valid */
+	struct qaic_sem	sem0;   /* Must be zero if not valid */
+	struct qaic_sem	sem1;   /* Must be zero if not valid */
+	struct qaic_sem	sem2;   /* Must be zero if not valid */
+	struct qaic_sem	sem3;   /* Must be zero if not valid */
 };
 
-struct wait_exec {
+struct qaic_wait_exec {
 	__u64 handle; /* handle to wait on until execute is complete */
 };
 
