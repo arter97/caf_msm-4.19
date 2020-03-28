@@ -225,3 +225,10 @@ int __init mhi_dtr_init(void)
 {
 	return mhi_driver_register(&mhi_dtr_driver);
 }
+EXPORT_SYMBOL(mhi_dtr_init);
+
+void __exit mhi_dtr_exit(void)
+{
+	return mhi_driver_unregister(&mhi_dtr_driver);
+}
+MODULE_LICENSE("GPL v2");

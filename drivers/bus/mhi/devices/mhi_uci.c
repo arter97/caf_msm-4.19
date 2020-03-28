@@ -582,22 +582,24 @@ static int mhi_uci_probe(struct mhi_device *mhi_dev,
 	mutex_init(&uci_dev->mutex);
 	uci_dev->mhi_dev = mhi_dev;
 
+	mutex_lock(&uci_dev->mutex);
+	mutex_lock(&mhi_uci_drv.lock);
+
 	minor = find_first_zero_bit(uci_minors, MAX_UCI_DEVICES);
 	if (minor >= MAX_UCI_DEVICES) {
+		mutex_unlock(&mhi_uci_drv.lock);
+		mutex_unlock(&uci_dev->mutex);
 		kfree(uci_dev);
 		return -ENOSPC;
 	}
 
-	mutex_lock(&uci_dev->mutex);
-	mutex_lock(&mhi_uci_drv.lock);
-
 	uci_dev->devt = MKDEV(mhi_uci_drv.major, minor);
 	uci_dev->dev = device_create(mhi_uci_drv.class, &mhi_dev->dev,
 				     uci_dev->devt, uci_dev,
-				     DEVICE_NAME "_%04x_%02u.%02u.%02u%s%d",
+				     DEVICE_NAME "_%04x_%02u.%02u.%02u%s%s",
 				     mhi_dev->dev_id, mhi_dev->domain,
-				     mhi_dev->bus, mhi_dev->slot, "_pipe_",
-				     mhi_dev->ul_chan_id);
+				     mhi_dev->bus, mhi_dev->slot, "_",
+				     mhi_dev->chan_name);
 	set_bit(minor, uci_minors);
 
 	/* create debugging buffer */
@@ -695,7 +697,9 @@ static const struct mhi_device_id mhi_uci_match_table[] = {
 	{ .chan = "QMI1", .driver_data = 0x1000 },
 	{ .chan = "TF", .driver_data = 0x1000 },
 	{ .chan = "DUN", .driver_data = 0x1000 },
-	{ .chan = "DIAG", .driver_data = 0x1000 },
+	{ .chan = "QAIC_DIAG", .driver_data = 0x1000 },
+	{ .chan = "QAIC_SAHARA", .driver_data = 0x8000 },
+	{ .chan = "QAIC_QDSS", .driver_data = 0x1000 },
 	{},
 };
 

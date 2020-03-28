@@ -1219,6 +1219,8 @@ int mhi_process_ctrl_ev_ring(struct mhi_controller *mhi_cntrl,
 	struct mhi_event_ctxt *er_ctxt =
 		&mhi_cntrl->mhi_ctxt->er_ctxt[mhi_event->er_index];
 	int count = 0;
+	u32 chan;
+	struct mhi_chan *mhi_chan;
 
 	/*
 	 * this is a quick check to avoid unnecessary event processing
@@ -1328,6 +1330,12 @@ int mhi_process_ctrl_ev_ring(struct mhi_controller *mhi_cntrl,
 
 			break;
 		}
+		case MHI_PKT_TYPE_TX_EVENT:
+			chan = MHI_TRE_GET_EV_CHID(local_rp);
+			mhi_chan = &mhi_cntrl->mhi_chan[chan];
+			parse_xfer_event(mhi_cntrl, local_rp, mhi_chan);
+			event_quota--;
+			break;
 		default:
 			MHI_ERR("Unhandled Event: 0x%x\n", type);
 			break;
@@ -1732,8 +1740,14 @@ irqreturn_t mhi_intvec_handlr(int irq_number, void *dev)
 	wake_up_all(&mhi_cntrl->state_event);
 	MHI_VERB("Exit\n");
 
+#ifndef CONFIG_QAIC
+	/*
+	 * Fixme: Todo: need to check some extra condition which modem
+	 * should test for scheduling low_priority_worker
+	 */
 	if (MHI_IN_MISSION_MODE(mhi_cntrl->ee))
 		schedule_work(&mhi_cntrl->low_priority_worker);
+#endif
 
 	return IRQ_WAKE_THREAD;
 }
