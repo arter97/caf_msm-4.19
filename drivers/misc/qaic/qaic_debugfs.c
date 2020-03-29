@@ -30,10 +30,10 @@ static int read_dbc_queued(void *data, u64 *value)
 
 	if (head == U32_MAX || tail == U32_MAX)
 		*value = 0;
-	else if (head < tail)
-		*value = (head - tail) + dbc->nelem;
+	else if (head > tail)
+		*value = dbc->nelem - head + tail;
 	else
-		*value = head - tail;
+		*value = tail - head;
 
 	return 0;
 }
