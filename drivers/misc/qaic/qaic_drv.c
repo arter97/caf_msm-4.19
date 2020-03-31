@@ -21,6 +21,8 @@
 #include "qaic.h"
 #include "qaic_debugfs.h"
 #include "qaic_telemetry.h"
+#define CREATE_TRACE_POINTS
+#include "qaic_trace.h"
 
 #define PCI_VENDOR_ID_QTI		0x17cb
 
@@ -159,9 +161,7 @@ static long qaic_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		return -ENODEV;
 	}
 
-	pci_dbg(qdev->pdev, "%s pid:%d cmd:0x%x (%c nr=%d len=%d dir=%d)\n",
-		__func__, current->pid, cmd, _IOC_TYPE(cmd), _IOC_NR(cmd),
-		_IOC_SIZE(cmd), _IOC_DIR(cmd));
+	trace_qaic_ioctl(qdev, usr, cmd);
 
 	qdev_rcu_id = srcu_read_lock(&qdev->dev_lock);
 	if (qdev->in_reset) {
@@ -754,4 +754,4 @@ module_exit(qaic_exit);
 
 MODULE_DESCRIPTION("QTI Cloud AI Accelerators Driver");
 MODULE_LICENSE("GPL v2");
-MODULE_VERSION("2.0.4"); /* MAJOR.MINOR.PATCH */
+MODULE_VERSION("2.0.5"); /* MAJOR.MINOR.PATCH */
