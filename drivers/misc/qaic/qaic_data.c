@@ -815,6 +815,7 @@ int qaic_wait_exec_ioctl(struct qaic_device *qdev, struct qaic_user *usr,
 {
 	struct mem_handle *mem;
 	struct qaic_wait_exec *wait;
+	unsigned int timeout;
 	int handle;
 	int dbc_id;
 	int rcu_id;
@@ -828,6 +829,11 @@ int qaic_wait_exec_ioctl(struct qaic_device *qdev, struct qaic_user *usr,
 
 	if (copy_from_user(wait, (void __user *)arg, sizeof(*wait))) {
 		ret = -EFAULT;
+		goto free_wait;
+	}
+
+	if (wait->resv) {
+		ret = -EINVAL;
 		goto free_wait;
 	}
 
@@ -863,8 +869,9 @@ int qaic_wait_exec_ioctl(struct qaic_device *qdev, struct qaic_user *usr,
 	/* we don't want the mem handle freed under us in case of deactivate */
 	kref_get(&mem->ref_count);
 	srcu_read_unlock(&qdev->dbc[dbc_id].ch_lock, rcu_id);
+	timeout = wait->timeout ? wait->timeout : wait_exec_default_timeout;
 	ret = wait_for_completion_interruptible_timeout(&mem->xfer_done,
-				msecs_to_jiffies(wait_exec_default_timeout));
+				msecs_to_jiffies(timeout));
 	rcu_id = srcu_read_lock(&qdev->dbc[dbc_id].ch_lock);
 	if (!ret)
 		ret = -ETIMEDOUT;

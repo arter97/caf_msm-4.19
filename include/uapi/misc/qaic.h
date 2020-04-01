@@ -139,6 +139,8 @@ struct qaic_execute {
 
 struct qaic_wait_exec {
 	__u64 handle; /* handle to wait on until execute is complete */
+	__u32 timeout;/* timeout for wait(in ms) */
+	__u32 resv;   /* reserved for future use, must be 0 */
 };
 
 #define QAIC_IOCTL_MANAGE_NR	0x01
