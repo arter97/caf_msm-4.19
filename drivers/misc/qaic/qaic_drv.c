@@ -21,6 +21,7 @@
 #include "mhi_controller.h"
 #include "qaic.h"
 #include "qaic_debugfs.h"
+#include "qaic_ras.h"
 #include "qaic_telemetry.h"
 #define CREATE_TRACE_POINTS
 #include "qaic_trace.h"
@@ -722,6 +723,7 @@ static int __init qaic_init(void)
 	}
 
 	qaic_telemetry_register();
+	qaic_ras_register();
 	pr_debug("qaic: init success\n");
 	goto out;
 
@@ -745,6 +747,7 @@ static void __exit qaic_exit(void)
 	pci_unregister_driver(&qaic_pci_driver);
 	mhi_driver_unregister(&qaic_mhi_driver);
 	qaic_telemetry_unregister();
+	qaic_ras_unregister();
 	class_destroy(qaic_class);
 	unregister_chrdev_region(MKDEV(qaic_major, 0), QAIC_MAX_MINORS);
 	idr_destroy(&qaic_devs);
@@ -756,4 +759,4 @@ module_exit(qaic_exit);
 
 MODULE_DESCRIPTION("QTI Cloud AI Accelerators Driver");
 MODULE_LICENSE("GPL v2");
-MODULE_VERSION("3.0.0"); /* MAJOR.MINOR.PATCH */
+MODULE_VERSION("3.0.2"); /* MAJOR.MINOR.PATCH */

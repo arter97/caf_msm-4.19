@@ -14,4 +14,5 @@ qaic-y := \
 	qaic_control.o \
 	qaic_data.o \
 	qaic_debugfs.o \
-	qaic_telemetry.o
+	qaic_telemetry.o \
+	qaic_ras.o

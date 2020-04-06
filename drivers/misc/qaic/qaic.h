@@ -83,6 +83,7 @@ struct qaic_device {
 	struct mutex		tele_mutex;
 	bool			tele_lost_buf;
 	struct workqueue_struct	*tele_wq;
+	struct mhi_device	*ras_ch;
 };
 
 int get_dbc_req_elem_size(void);
