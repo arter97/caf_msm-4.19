@@ -438,7 +438,7 @@ static bool invalid_sem(struct sem *sem)
 static int encode_execute(struct qaic_device *qdev, struct mem_handle *mem,
 			  struct execute *exec, u16 req_id)
 {
-	u8 cmd = BULK_XFER | GEN_COMPLETION;
+	u8 cmd = BULK_XFER;
 	u64 db_addr = cpu_to_le64(exec->db_addr);
 	u8 db_len;
 	u32 db_data = cpu_to_le32(exec->db_data);
@@ -539,6 +539,7 @@ static int encode_execute(struct qaic_device *qdev, struct mem_handle *mem,
 	}
 	/* add post transfer stuff to last segment */
 	i--;
+	mem->reqs[i].cmd |= GEN_COMPLETION;
 	mem->reqs[i].db_addr = db_addr;
 	mem->reqs[i].db_len = db_len;
 	mem->reqs[i].db_data = db_data;
