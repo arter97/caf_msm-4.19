@@ -1111,7 +1111,7 @@ static int of_parse_ev_cfg(struct mhi_controller *mhi_cntrl,
 			   struct device_node *of_node,
 			   struct mhi_controller_config *config)
 {
-	int i, ret, num = 0;
+	int ret, num = 0;
 	struct mhi_event_config *mhi_event;
 	struct device_node *child;
 	struct mhi_event_config *event_cfg;
@@ -1136,7 +1136,6 @@ static int of_parse_ev_cfg(struct mhi_controller *mhi_cntrl,
 
 	/* populate ev ring */
 	mhi_event = event_cfg;
-	i = 0;
 	for_each_available_child_of_node(of_node, child) {
 		if (strcmp(child->name, "mhi_event"))
 			continue;
@@ -1214,7 +1213,7 @@ static int parse_ev_cfg(struct mhi_controller *mhi_cntrl,
 	for (i = 0; i < num; ++i) {
 		event_cfg = &config->event_cfg[i];
 
-		mhi_event->er_index = i++;
+		mhi_event->er_index = i;
 		mhi_event->ring.elements = event_cfg->num_elements;
 		mhi_event->intmod = event_cfg->irq_moderation_ms;;
 		mhi_event->msi = event_cfg->msi;
@@ -1228,7 +1227,7 @@ static int parse_ev_cfg(struct mhi_controller *mhi_cntrl,
 				&mhi_cntrl->mhi_chan[mhi_event->chan];
 		}
 
-		mhi_event->priority = 1;
+		mhi_event->priority = event_cfg->priority;
 
 		mhi_event->db_cfg.brstmode = event_cfg->mode;
 		if (MHI_INVALID_BRSTMODE(mhi_event->db_cfg.brstmode))
@@ -1299,14 +1298,6 @@ static int of_parse_ch_cfg(struct mhi_controller *mhi_cntrl,
 	struct device_node *child;
 	struct mhi_channel_config *mhi_chan;
 
-	for_each_available_child_of_node(of_node, child) {
-		if (!strcmp(child->name, "mhi_chan"))
-			num++;
-	}
-
-	if (!num)
-		return -EINVAL;
-
 	ret = of_property_read_u32(of_node, "mhi,max-channels",
 				   &config->max_channels);
 	if (ret)
@@ -1314,6 +1305,14 @@ static int of_parse_ch_cfg(struct mhi_controller *mhi_cntrl,
 
 	of_node = of_find_node_by_name(of_node, "mhi_channels");
 	if (!of_node)
+		return -EINVAL;
+
+	for_each_available_child_of_node(of_node, child) {
+		if (!strcmp(child->name, "mhi_chan"))
+			num++;
+	}
+
+	if (!num)
 		return -EINVAL;
 
 	config->ch_cfg = kcalloc(num, sizeof(*config->ch_cfg), GFP_KERNEL);
@@ -1448,11 +1447,9 @@ static int parse_ch_cfg(struct mhi_controller *mhi_cntrl,
 		mhi_chan->name = ch_cfg->name;
 		mhi_chan->chan = chan;
 
-		mhi_chan->buf_ring.elements = ch_cfg->num_elements;
-		if (!mhi_chan->buf_ring.elements)
-			goto error_chan_cfg;
+		mhi_chan->buf_ring.elements = ch_cfg->local_elements;
 
-		mhi_chan->tre_ring.elements = ch_cfg->local_elements;
+		mhi_chan->tre_ring.elements = ch_cfg->num_elements;
 		mhi_chan->er_index = ch_cfg->event_ring;
 		mhi_chan->dir = ch_cfg->dir;
 		mhi_chan->type = ch_cfg->type;
@@ -1559,7 +1556,7 @@ static struct mhi_controller_config *of_parse_dt(
 	ret = of_property_read_u32(of_node, "mhi,timeout",
 				   &config->timeout_ms);
 	if (ret)
-		config->timeout_ms = 0;
+		config->timeout_ms = MHI_TIMEOUT_MS;
 
 	config->time_sync = of_property_read_bool(of_node, "mhi,time-sync");
 
@@ -1574,12 +1571,12 @@ static struct mhi_controller_config *of_parse_dt(
 	ret = of_property_read_u32(of_node, "mhi,buffer-len",
 				   &config->buf_len);
 	if (ret)
-		config->buf_len = 0;
+		config->buf_len = MHI_MAX_MTU;
 
 	config->m2_no_db_access = of_property_read_bool(of_node,
 							"mhi,m2-no-db-access");
 	/* parse the device ee table */
-	for (i = MHI_EE_PBL, ee = config->ee_table; i < MHI_EE_MAX;
+	for (i = MHI_EE_PBL, ee = mhi_cntrl->ee_table; i < MHI_EE_MAX;
 	     i++, ee++) {
 		/* setup the default ee before checking for override */
 		*ee = i;
@@ -1636,7 +1633,6 @@ static int parse_config(struct mhi_controller *mhi_cntrl,
 			struct mhi_controller_config *config)
 {
 	int ret;
-	enum mhi_ee i;
 
 	/* parse MHI channel configuration */
 	ret = parse_ch_cfg(mhi_cntrl, config);
@@ -1661,10 +1657,6 @@ static int parse_config(struct mhi_controller *mhi_cntrl,
 	mhi_cntrl->db_access = MHI_PM_M0 | MHI_PM_M2;
 	if (config->m2_no_db_access)
 		mhi_cntrl->db_access &= ~MHI_PM_M2;
-
-	/* parse the device ee table */
-	for (i = MHI_EE_PBL; i < MHI_EE_MAX; i++)
-		mhi_cntrl->ee_table[i] = config->ee_table[i];
 
 	mhi_cntrl->bhie = mhi_cntrl->regs + config->bhie_offset;
 
