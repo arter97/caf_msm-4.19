@@ -480,6 +480,7 @@ static int mhi_uci_open(struct inode *inode, struct file *filp)
 	mutex_lock(&uci_dev->mutex);
 	if (!uci_dev->enabled) {
 		MSG_ERR("Node exist, but not in active state!\n");
+		ret = -ENODEV;
 		goto error_open_chan;
 	}
 
