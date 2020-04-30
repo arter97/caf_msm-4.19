@@ -536,8 +536,7 @@ static int init_crypt_info_for_ice(struct fscrypt_info *ci,
 		int err;
 
 		/* hashed_ino = SipHash(key=SHA256(master_key), data=i_ino) */
-		err = fscrypt_do_sha256(raw_key, raw_key_size/2,
-					ino_hash_key.bytes);
+		err = fscrypt_do_sha256(raw_key, 32, ino_hash_key.bytes);
 		if (err)
 			return err;
 		ci->ci_hashed_ino = siphash_1u64(inode->i_ino, &ino_hash_key.k);
