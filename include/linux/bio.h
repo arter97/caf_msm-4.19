@@ -79,6 +79,8 @@
 #define bio_end_dun(bio)	(bio_dun(bio) + bio_duns(bio))
 #else
 #define bio_dun(bio)		0
+#define bio_duns(bio)		0
+#define bio_end_dun(bio)	0
 #endif
 
 /*
