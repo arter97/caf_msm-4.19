@@ -1162,5 +1162,10 @@ char *mhi_get_restart_reason(const char *name);
 } while (0)
 
 #endif
+/*
+ * mhi_do_soc_reset - Issue SoC Reset to the external device.
+ * @mhi_cntrl: MHI controller
+ */
+void mhi_do_soc_reset(struct mhi_controller *mhi_cntrl);
 
 #endif /* _MHI_H_ */
