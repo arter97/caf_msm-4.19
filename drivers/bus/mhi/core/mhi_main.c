@@ -1719,7 +1719,7 @@ irqreturn_t mhi_intvec_threaded_handlr(int irq_number, void *dev)
 		wake_up_all(&mhi_cntrl->state_event);
 
 		/* for fatal errors, we let controller decide next step */
-		if (MHI_IN_PBL(ee))
+		if (MHI_IN_PBL(mhi_cntrl->ee))
 			mhi_cntrl->status_cb(mhi_cntrl, mhi_cntrl->priv_data,
 					     MHI_CB_FATAL_ERROR);
 		else
