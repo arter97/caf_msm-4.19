@@ -20,8 +20,21 @@ enum msg_type {
 };
 
 enum err_type {
-	CE, /* correctable error */
-	UE, /* uncorrectable error */
+	CE,	/* correctable error */
+	UE,	/* uncorrectable error */
+	UE_NF,	/* uncorrectable error that is non-fatal, expect a disruption */
+};
+
+const char * const err_type_str[] = {
+	[CE]    = "Correctable",
+	[UE]    = "Uncorrectable",
+	[UE_NF] = "Uncorrectable Non-Fatal",
+};
+
+const char * const err_class_str[] = {
+	[CE]    = "Warning",
+	[UE]    = "Fatal",
+	[UE_NF] = "Warning",
 };
 
 enum err_source {
@@ -121,6 +134,26 @@ struct sysbus2_syndrome {
 	u32 msb3;
 } __packed;
 
+struct pcie_syndrome {
+	/* CE info */
+	u32 bad_tlp;
+	u32 bad_dllp;
+	u32 replay_rollover;
+	u32 replay_timeout;
+	u32 rx_err;
+	u32 internal_ce_count;
+	/* UE info */
+	u8  index;
+	u32 addr;
+	/* UE_NF info */
+	u32 fc_timeout;
+	u32 poison_tlp;
+	u32 ecrc_err;
+	u32 unsupported_req;
+	u32 completer_abort;
+	u32 completion_timeout;
+} __packed;
+
 const char * const threshold_type_str[NUM_TEMP_LVL] = {
 	[0] = "lower",
 	[1] = "upper",
@@ -139,6 +172,8 @@ static void decode_ras_msg(struct qaic_device *qdev, struct ras_data *msg)
 				(struct nsp_mem_syndrome *)&msg->syndrome[0];
 	struct tsens_syndrome *tsens_syndrome =
 				(struct tsens_syndrome *)&msg->syndrome[0];
+	struct pcie_syndrome *pcie_syndrome =
+				(struct pcie_syndrome *)&msg->syndrome[0];
 	struct ddr_syndrome *ddr_syndrome =
 				(struct ddr_syndrome *)&msg->syndrome[0];
 	char *class;
@@ -164,7 +199,7 @@ static void decode_ras_msg(struct qaic_device *qdev, struct ras_data *msg)
 		return;
 	}
 
-	if (msg->err_type)
+	if (msg->err_type == UE)
 		level = KERN_ERR;
 	else
 		level = KERN_WARNING;
@@ -172,8 +207,8 @@ static void decode_ras_msg(struct qaic_device *qdev, struct ras_data *msg)
 	switch (msg->source) {
 	case SOC_MEM:
 		pci_printk(level, qdev->pdev, "RAS event.\nClass:%s\nDescription:%s %s %s\nSyndrome:\n    0x%llx\n    0x%llx\n    0x%llx\n    0x%llx\n    0x%llx\n    0x%llx\n    0x%llx\n    0x%llx\n",
-			   msg->err_type ? "Fatal" : "Warning",
-			   msg->err_type ? "Uncorrectable" : "Correctable",
+			   err_class_str[msg->err_type],
+			   err_type_str[msg->err_type],
 			   "error from",
 			   err_src_str[msg->source],
 			   soc_syndrome->error_address[0],
@@ -187,15 +222,42 @@ static void decode_ras_msg(struct qaic_device *qdev, struct ras_data *msg)
 		break;
 	case PCIE:
 		pci_printk(level, qdev->pdev, "RAS event.\nClass:%s\nDescription:%s %s %s\n",
-			   msg->err_type ? "Fatal" : "Warning",
-			   msg->err_type ? "Uncorrectable" : "Correctable",
+			   err_class_str[msg->err_type],
+			   err_type_str[msg->err_type],
 			   "error from",
 			   err_src_str[msg->source]);
+
+		switch (msg->err_type) {
+		case CE:
+			printk(KERN_WARNING pr_fmt("Syndrome:\n    Bad TLP count %d\n    Bad DLLP count %d\n    Replay Rollover count %d\n    Replay Timeout count %d\n    Recv Error count %d\n    Internal CE count %d\n"),
+			       pcie_syndrome->bad_tlp,
+			       pcie_syndrome->bad_dllp,
+			       pcie_syndrome->replay_rollover,
+			       pcie_syndrome->replay_timeout,
+			       pcie_syndrome->rx_err,
+			       pcie_syndrome->internal_ce_count);
+			break;
+		case UE:
+			printk(KERN_ERR pr_fmt("Syndrome:\n    Index %d\n    Address 0x%x\n"),
+			       pcie_syndrome->index, pcie_syndrome->addr);
+			break;
+		case UE_NF:
+			printk(KERN_WARNING pr_fmt("Syndrome:\n    FC timeout count %d\n    Poisoned TLP count %d\n    ECRC error count %d\n    Unsupported request count %d\n    Completer abort count %d\n    Completion timeout count %d\n"),
+			       pcie_syndrome->fc_timeout,
+			       pcie_syndrome->poison_tlp,
+			       pcie_syndrome->ecrc_err,
+			       pcie_syndrome->unsupported_req,
+			       pcie_syndrome->completer_abort,
+			       pcie_syndrome->completion_timeout);
+			break;
+		default:
+			break;
+		}
 		break;
 	case DDR:
 		pci_printk(level, qdev->pdev, "RAS event.\nClass:%s\nDescription:%s %s %s\nSyndrome:\n    Instance %d\n    Count %d\n    AMID 0x%x\n    Data 31_0 0x%x 0x%x\n    Data 63_32 0x%x 0x%x\n    Data 95_64 0x%x 0x%x\n    Data 127_96 0x%x 0x%x\n    Parity bits 0x%x\n    Address msb 0x%x\n    Address lsb 0x%x\n",
-			   msg->err_type ? "Fatal" : "Warning",
-			   msg->err_type ? "Uncorrectable" : "Correctable",
+			   err_class_str[msg->err_type],
+			   err_type_str[msg->err_type],
 			   "error from",
 			   err_src_str[msg->source],
 			   ddr_syndrome->instance,
@@ -215,8 +277,8 @@ static void decode_ras_msg(struct qaic_device *qdev, struct ras_data *msg)
 		break;
 	case SYS_BUS1:
 		pci_printk(level, qdev->pdev, "RAS event.\nClass:%s\nDescription:%s %s %s\nSyndome:\n    instance %d\n    %s\n    err_type %d\n    address0 0x%x\n    address1 0x%x\n    address2 0x%x\n    address3 0x%x\n    address4 0x%x\n    address5 0x%x\n    address6 0x%x\n    address7 0x%x\n",
-			   msg->err_type ? "Fatal" : "Warning",
-			   msg->err_type ? "Uncorrectable" : "Correctable",
+			   err_class_str[msg->err_type],
+			   err_type_str[msg->err_type],
 			   "error from",
 			   err_src_str[msg->source],
 			   sysbus1_syndrome->instance,
@@ -232,8 +294,8 @@ static void decode_ras_msg(struct qaic_device *qdev, struct ras_data *msg)
 			   sysbus1_syndrome->addr[7]);
 	case SYS_BUS2:
 		pci_printk(level, qdev->pdev, "RAS event.\nClass:%s\nDescription:%s %s %s\nSyndome:\n    instance %d\n    valid %d\n    word error %d\n    non-secure %d\n    opc %d\n    error code %d\n    transaction type %d\n    address space %d\n    operation type %d\n    len %d\n    redirect %d\n    path %d\n    ext_id %d\n    lsb2 %d\n    msb2 %d\n    lsb3 %d\n    msb3 %d\n",
-			   msg->err_type ? "Fatal" : "Warning",
-			   msg->err_type ? "Uncorrectable" : "Correctable",
+			   err_class_str[msg->err_type],
+			   err_type_str[msg->err_type],
 			   "error from",
 			   err_src_str[msg->source],
 			   sysbus2_syndrome->instance,
@@ -256,8 +318,8 @@ static void decode_ras_msg(struct qaic_device *qdev, struct ras_data *msg)
 		break;
         case NSP_MEM:
 		pci_printk(level, qdev->pdev, "RAS event.\nClass:%s\nDescription:%s %s %s\nSyndrome:\n    NSP ID %d\n    0x%x\n    0x%x\n    0x%x\n    0x%x\n    0x%x\n    0x%x\n    0x%x\n    0x%x\n",
-			   msg->err_type ? "Fatal" : "Warning",
-			   msg->err_type ? "Uncorrectable" : "Correctable",
+			   err_class_str[msg->err_type],
+			   err_type_str[msg->err_type],
 			   "error from",
 			   err_src_str[msg->source],
 			   nsp_syndrome->nsp_id,
@@ -285,7 +347,7 @@ static void decode_ras_msg(struct qaic_device *qdev, struct ras_data *msg)
 
 		pci_printk(level, qdev->pdev, "RAS event.\nClass:%s\nDescription:%s %s %s\nSyndrome:\n    %s threshold\n    %d deg C\n",
 			   class,
-			   msg->err_type ? "Uncorrectable" : "Correctable",
+			   err_type_str[msg->err_type],
 			   "error from",
 			   err_src_str[msg->source],
 			   threshold_type_str[tsens_syndrome->threshold_type],
@@ -294,7 +356,7 @@ static void decode_ras_msg(struct qaic_device *qdev, struct ras_data *msg)
 	}
 
 	/* Uncorrectable errors are fatal */
-	if (msg->err_type)
+	if (msg->err_type == UE)
 		mhi_do_soc_reset(qdev->mhi_cntl);
 }
 
