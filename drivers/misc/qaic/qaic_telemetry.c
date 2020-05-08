@@ -333,6 +333,7 @@ static umode_t qaic_is_visible(const void *data, enum hwmon_sensor_types type,
 		default:
 			return 0444;
 		}
+		break;
 	case hwmon_temp:
 		switch (attr) {
 		case hwmon_temp_input: /* fallthrough */
@@ -343,6 +344,7 @@ static umode_t qaic_is_visible(const void *data, enum hwmon_sensor_types type,
 		case hwmon_temp_emergency:
 			return 0644;
 		}
+		break;
 	default:
 		return 0;
 	}

@@ -292,6 +292,7 @@ static void decode_ras_msg(struct qaic_device *qdev, struct ras_data *msg)
 			   sysbus1_syndrome->addr[5],
 			   sysbus1_syndrome->addr[6],
 			   sysbus1_syndrome->addr[7]);
+		break;
 	case SYS_BUS2:
 		pci_printk(level, qdev->pdev, "RAS event.\nClass:%s\nDescription:%s %s %s\nSyndome:\n    instance %d\n    valid %d\n    word error %d\n    non-secure %d\n    opc %d\n    error code %d\n    transaction type %d\n    address space %d\n    operation type %d\n    len %d\n    redirect %d\n    path %d\n    ext_id %d\n    lsb2 %d\n    msb2 %d\n    lsb3 %d\n    msb3 %d\n",
 			   err_class_str[msg->err_type],
