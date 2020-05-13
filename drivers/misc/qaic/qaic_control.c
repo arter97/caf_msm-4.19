@@ -15,9 +15,11 @@
 #include <linux/types.h>
 #include <linux/uaccess.h>
 #include <linux/workqueue.h>
+#include <linux/wait.h>
 #include <uapi/misc/qaic.h>
 
 #include "qaic.h"
+#include "qaic_trace.h"
 
 #define MANAGE_MAGIC_NUMBER	0x43494151 /* "QAIC" in little endian */
 #define QAIC_DBC_Q_GAP		0x100
@@ -38,7 +40,7 @@ struct _msg_hdr {
 
 struct _msg {
 	struct _msg_hdr hdr;
-	u8 data[MANAGE_MAX_MSG_LENGTH];
+	u8 data[QAIC_MANAGE_MAX_MSG_LENGTH];
 } __packed;
 
 struct wrapper_msg {
@@ -157,12 +159,15 @@ static void save_dbc_buf(struct qaic_device *qdev,
 	u32 dbc_id = resources->dbc_id;
 
 	if (resources->buf) {
+		wait_event_interruptible(qdev->dbc[dbc_id].dbc_release,
+					 !qdev->dbc[dbc_id].in_use);
 		qdev->dbc[dbc_id].req_q_base = resources->buf;
 		qdev->dbc[dbc_id].rsp_q_base = resources->rsp_q_base;
 		qdev->dbc[dbc_id].dma_addr = resources->dma_addr;
 		qdev->dbc[dbc_id].total_size = resources->total_size;
 		qdev->dbc[dbc_id].nelem = resources->nelem;
 		qdev->dbc[dbc_id].usr = usr;
+		qdev->dbc[dbc_id].in_use = true;
 		resources->buf = 0;
 	}
 }
@@ -196,13 +201,16 @@ static void free_dma_xfers(struct qaic_device *qdev,
 	}
 }
 
-static int encode_passthrough(void *trans, struct _msg *msg, u32 *user_len)
+static int encode_passthrough(struct qaic_device *qdev, void *trans,
+			      struct _msg *msg, u32 *user_len)
 {
-	struct manage_trans_passthrough *in_trans = trans;
+	struct qaic_manage_trans_passthrough *in_trans = trans;
 	struct _trans_passthrough *out_trans = (void *)msg + msg->hdr.len;
 
-	if (msg->hdr.len + in_trans->hdr.len > sizeof(*msg))
+	if (msg->hdr.len + in_trans->hdr.len > sizeof(*msg)) {
+		trace_encode_error(qdev, "passthrough trans exceeds msg len");
 		return -ENOSPC;
+	}
 
 	memcpy(out_trans, in_trans, in_trans->hdr.len);
 	msg->hdr.len += in_trans->hdr.len;
@@ -216,7 +224,7 @@ static int encode_passthrough(void *trans, struct _msg *msg, u32 *user_len)
 static int encode_dma(struct qaic_device *qdev, void *trans, struct _msg *msg,
 		      u32 *user_len, struct ioctl_resources *resources)
 {
-	struct manage_trans_dma_xfer *in_trans = trans;
+	struct qaic_manage_trans_dma_xfer *in_trans = trans;
 	struct _trans_dma_xfer *out_trans = (void *)msg + msg->hdr.len;
 	struct dma_xfer *xfer;
 	unsigned long nr_pages;
@@ -232,12 +240,14 @@ static int encode_dma(struct qaic_device *qdev, void *trans, struct _msg *msg,
 
 	if (in_trans->addr + in_trans->size < in_trans->addr ||
 	    !in_trans->size) {
+		trace_encode_error(qdev, "dma trans addr range overflow or no size");
 		ret = -EINVAL;
 		goto out;
 	}
 
 	xfer = kmalloc(sizeof(*xfer), GFP_KERNEL);
 	if (!xfer) {
+		trace_encode_error(qdev, "dma no mem for xfer");
 		ret = -ENOMEM;
 		goto out;
 	}
@@ -247,18 +257,21 @@ static int encode_dma(struct qaic_device *qdev, void *trans, struct _msg *msg,
 
 	page_list = kmalloc_array(nr_pages, sizeof(*page_list), GFP_KERNEL);
 	if (!page_list) {
+		trace_encode_error(qdev, "dma page list alloc fail");
 		ret = -ENOMEM;
 		goto free_resource;
 	}
 
 	ret = get_user_pages_fast(in_trans->addr, nr_pages, 0, page_list);
 	if (ret < 0 || ret != nr_pages) {
+		trace_encode_error(qdev, "dma get user pages fail");
 		ret = -EFAULT;
 		goto free_page_list;
 	}
 
 	sgt = kmalloc(sizeof(*sgt), GFP_KERNEL);
 	if (!sgt) {
+		trace_encode_error(qdev, "dma sgt alloc fail");
 		ret = -ENOMEM;
 		goto put_pages;
 	}
@@ -267,6 +280,7 @@ static int encode_dma(struct qaic_device *qdev, void *trans, struct _msg *msg,
 					offset_in_page(in_trans->addr),
 					in_trans->size, GFP_KERNEL);
 	if (ret) {
+		trace_encode_error(qdev, "dma alloc table from pages fail");
 		ret = -ENOMEM;
 		goto free_sgt;
 	}
@@ -274,6 +288,7 @@ static int encode_dma(struct qaic_device *qdev, void *trans, struct _msg *msg,
 	nents = dma_map_sg(&qdev->pdev->dev, sgt->sgl, sgt->nents,
 			   DMA_TO_DEVICE);
 	if (!nents) {
+		trace_encode_error(qdev, "dma mapping failed");
 		ret = -EFAULT;
 		goto free_table;
 	}
@@ -299,6 +314,7 @@ static int encode_dma(struct qaic_device *qdev, void *trans, struct _msg *msg,
 	 */
 	if (msg->hdr.len + sizeof(*out_trans) + dmas * sizeof(*out_trans->data)
 							> sizeof(*msg)) {
+		trace_encode_error(qdev, "dma trans exceeds msg len");
 		ret = -ENOSPC;
 		goto dma_unmap;
 	}
@@ -360,35 +376,47 @@ static int encode_activate(struct qaic_device *qdev, void *trans,
 			   struct _msg *msg, u32 *user_len,
 			   struct ioctl_resources *resources)
 {
-	struct manage_trans_activate_to_dev *in_trans = trans;
+	struct qaic_manage_trans_activate_to_dev *in_trans = trans;
 	struct _trans_activate_to_dev *out_trans = (void *)msg + msg->hdr.len;
 	dma_addr_t dma_addr;
 	void *buf;
 	u32 nelem;
 	u32 size;
 
-	if (msg->hdr.len + sizeof(*out_trans) > sizeof(*msg))
+	if (msg->hdr.len + sizeof(*out_trans) > sizeof(*msg)) {
+		trace_encode_error(qdev, "activate trans exceeds msg len");
 		return -ENOSPC;
+	}
 
-	if (!in_trans->queue_size)
+	if (!in_trans->queue_size) {
+		trace_encode_error(qdev, "activate unspecified queue size");
 		return -EINVAL;
+	}
 
-	if (in_trans->resv)
+	if (in_trans->resv) {
+		trace_encode_error(qdev, "activate non-zero resv");
 		return -EINVAL;
+	}
 
 	nelem = in_trans->queue_size;
-	size = (QAIC_DBC_REQ_ELEM_SIZE + QAIC_DBC_RSP_ELEM_SIZE) * nelem;
-	if (size / nelem != QAIC_DBC_REQ_ELEM_SIZE + QAIC_DBC_RSP_ELEM_SIZE)
+	size = (get_dbc_req_elem_size() + get_dbc_rsp_elem_size()) * nelem;
+	if (size / nelem != get_dbc_req_elem_size() + get_dbc_rsp_elem_size()) {
+		trace_encode_error(qdev, "activate queue size overflow");
 		return -EINVAL;
+	}
 
-	if (size + QAIC_DBC_Q_GAP + QAIC_DBC_Q_BUF_ALIGN < size)
+	if (size + QAIC_DBC_Q_GAP + QAIC_DBC_Q_BUF_ALIGN < size) {
+		trace_encode_error(qdev, "activate queue size align overflow");
 		return -EINVAL;
+	}
 
 	size = ALIGN((size + QAIC_DBC_Q_GAP), QAIC_DBC_Q_BUF_ALIGN);
 
 	buf = dma_alloc_coherent(&qdev->pdev->dev, size, &dma_addr, GFP_KERNEL);
-	if (!buf)
+	if (!buf) {
+		trace_encode_error(qdev, "activate queue alloc fail");
 		return -ENOMEM;
+	}
 
 	out_trans->hdr.type = cpu_to_le32(TRANS_ACTIVATE_TO_DEV);
 	out_trans->hdr.len = cpu_to_le32(sizeof(*out_trans));
@@ -396,7 +424,7 @@ static int encode_activate(struct qaic_device *qdev, void *trans,
 	out_trans->req_q_addr = cpu_to_le64(dma_addr);
 	out_trans->req_q_size = cpu_to_le32(nelem);
 	out_trans->rsp_q_addr = cpu_to_le64(dma_addr + size - nelem *
-							QAIC_DBC_RSP_ELEM_SIZE);
+							get_dbc_rsp_elem_size());
 	out_trans->rsp_q_size = cpu_to_le32(nelem);
 
 	*user_len += in_trans->hdr.len;
@@ -406,30 +434,35 @@ static int encode_activate(struct qaic_device *qdev, void *trans,
 	resources->dma_addr = dma_addr;
 	resources->total_size = size;
 	resources->nelem = nelem;
-	resources->rsp_q_base = buf + size - nelem * QAIC_DBC_RSP_ELEM_SIZE;
+	resources->rsp_q_base = buf + size - nelem * get_dbc_rsp_elem_size();
 	return 0;
 }
 
 static int encode_deactivate(struct qaic_device *qdev, void *trans,
 			     u32 *user_len, struct qaic_user *usr)
 {
-	struct manage_trans_deactivate *in_trans = trans;
+	struct qaic_manage_trans_deactivate *in_trans = trans;
 
-	if (in_trans->dbc_id >= QAIC_NUM_DBC || in_trans->resv)
+	if (in_trans->dbc_id >= QAIC_NUM_DBC || in_trans->resv) {
+		trace_encode_error(qdev, "deactivate invalid dbc id or resv not zero");
 		return -EINVAL;
+	}
 
 	*user_len += in_trans->hdr.len;
 
 	return disable_dbc(qdev, in_trans->dbc_id, usr);
 }
 
-static int encode_status(void *trans, struct _msg *msg, u32 *user_len)
+static int encode_status(struct qaic_device *qdev, void *trans,
+			 struct _msg *msg, u32 *user_len)
 {
-	struct manage_trans_status_to_dev *in_trans = trans;
+	struct qaic_manage_trans_status_to_dev *in_trans = trans;
 	struct _trans_status_to_dev *out_trans = (void *)msg + msg->hdr.len;
 
-	if (msg->hdr.len + in_trans->hdr.len > sizeof(*msg))
+	if (msg->hdr.len + in_trans->hdr.len > sizeof(*msg)) {
+		trace_encode_error(qdev, "status trans exceeds msg len");
 		return -ENOSPC;
+	}
 
 	out_trans->hdr.type = cpu_to_le32(TRANS_STATUS_TO_DEV);
 	out_trans->hdr.len = cpu_to_le32(in_trans->hdr.len);
@@ -438,11 +471,12 @@ static int encode_status(void *trans, struct _msg *msg, u32 *user_len)
 
 	return 0;
 }
-static int encode_message(struct qaic_device *qdev, struct manage_msg *user_msg,
-			  struct _msg *msg, struct ioctl_resources *resources,
+static int encode_message(struct qaic_device *qdev,
+			  struct qaic_manage_msg *user_msg, struct _msg *msg,
+			  struct ioctl_resources *resources,
 			  struct qaic_user *usr)
 {
-	struct manage_trans_hdr *trans_hdr;
+	struct qaic_manage_trans_hdr *trans_hdr;
 	u32 user_len = 0;
 	int ret;
 	int i;
@@ -450,19 +484,22 @@ static int encode_message(struct qaic_device *qdev, struct manage_msg *user_msg,
 	msg->hdr.len = sizeof(msg->hdr);
 	for (i = 0; i < user_msg->count; ++i) {
 		if (user_len >= user_msg->len) {
+			trace_encode_error(qdev, "msg exceeds len");
 			ret = -EINVAL;
 			break;
 		}
-		trans_hdr = (struct manage_trans_hdr *)
+		trans_hdr = (struct qaic_manage_trans_hdr *)
 						(user_msg->data + user_len);
 		if (user_len + trans_hdr->len > user_msg->len) {
+			trace_encode_error(qdev, "trans exceeds msg len");
 			ret = -EINVAL;
 			break;
 		}
 
 		switch (trans_hdr->type) {
 		case TRANS_PASSTHROUGH_FROM_USR:
-			ret = encode_passthrough(trans_hdr, msg, &user_len);
+			ret = encode_passthrough(qdev, trans_hdr, msg,
+						 &user_len);
 			break;
 		case TRANS_DMA_XFER_FROM_USR:
 			ret = encode_dma(qdev, trans_hdr, msg, &user_len,
@@ -477,9 +514,10 @@ static int encode_message(struct qaic_device *qdev, struct manage_msg *user_msg,
 						usr);
 			break;
 		case TRANS_STATUS_FROM_USR:
-			ret = encode_status(trans_hdr, msg, &user_len);
+			ret = encode_status(qdev, trans_hdr, msg, &user_len);
 			break;
 		default:
+			trace_encode_error(qdev, "unknown trans");
 			ret = -EINVAL;
 			break;
 		}
@@ -488,8 +526,10 @@ static int encode_message(struct qaic_device *qdev, struct manage_msg *user_msg,
 			break;
 	}
 
-	if (user_len != user_msg->len)
+	if (user_len != user_msg->len) {
+		trace_encode_error(qdev, "msg processed exceeds len");
 		ret = -EINVAL;
+	}
 
 	if (ret) {
 		free_dma_xfers(qdev, resources);
@@ -501,18 +541,20 @@ static int encode_message(struct qaic_device *qdev, struct manage_msg *user_msg,
 	return 0;
 }
 
-static int decode_passthrough(void *trans, struct manage_msg *user_msg,
-			      u32 *msg_len)
+static int decode_passthrough(struct qaic_device *qdev, void *trans,
+			      struct qaic_manage_msg *user_msg, u32 *msg_len)
 {
 	struct _trans_passthrough *in_trans = trans;
-	struct manage_trans_passthrough *out_trans;
+	struct qaic_manage_trans_passthrough *out_trans;
 	u32 len;
 
 	out_trans = (void *)user_msg->data + user_msg->len;
 
 	len = le32_to_cpu(in_trans->hdr.len);
-	if (user_msg->len + len > MANAGE_MAX_MSG_LENGTH)
+	if (user_msg->len + len > QAIC_MANAGE_MAX_MSG_LENGTH) {
+		trace_decode_error(qdev, "passthrough trans exceeds msg len");
 		return -ENOSPC;
+	}
 
 	memcpy(out_trans, in_trans, len);
 	user_msg->len += len;
@@ -522,18 +564,21 @@ static int decode_passthrough(void *trans, struct manage_msg *user_msg,
 }
 
 static int decode_activate(struct qaic_device *qdev, void *trans,
-			   struct manage_msg *user_msg, u32 *msg_len,
-			   struct ioctl_resources *resources)
+			   struct qaic_manage_msg *user_msg, u32 *msg_len,
+			   struct ioctl_resources *resources,
+			   struct qaic_user *usr)
 {
 	struct _trans_activate_from_dev *in_trans = trans;
-	struct manage_trans_activate_from_dev *out_trans;
+	struct qaic_manage_trans_activate_from_dev *out_trans;
 	u32 len;
 
 	out_trans = (void *)user_msg->data + user_msg->len;
 
 	len = le32_to_cpu(in_trans->hdr.len);
-	if (user_msg->len + len > MANAGE_MAX_MSG_LENGTH)
+	if (user_msg->len + len > QAIC_MANAGE_MAX_MSG_LENGTH) {
+		trace_decode_error(qdev, "activate trans exceeds msg len");
 		return -ENOSPC;
+	}
 
 	user_msg->len += len;
 	*msg_len += len;
@@ -542,19 +587,25 @@ static int decode_activate(struct qaic_device *qdev, void *trans,
 	out_trans->status = le32_to_cpu(in_trans->status);
 	out_trans->dbc_id = le32_to_cpu(in_trans->dbc_id);
 
-	if (!resources->buf)
+	if (!resources->buf) {
+		trace_decode_error(qdev, "activate with no assigned resources");
 		/* how did we get an activate response with a request? */
 		return -EINVAL;
+	}
 
-	if (out_trans->dbc_id >= QAIC_NUM_DBC)
+	if (out_trans->dbc_id >= QAIC_NUM_DBC) {
+		trace_decode_error(qdev, "activate invalid dbc id");
 		/*
 		 * The device assigned an invalid resource, which should never
 		 * happen.  Inject an error so the user can try to recover.
 		 */
 		out_trans->status = -ENODEV;
+	}
 
 	resources->status = out_trans->status;
 	resources->dbc_id = out_trans->dbc_id;
+	if (!resources->status)
+		save_dbc_buf(qdev, resources, usr);
 	return 0;
 }
 
@@ -565,37 +616,43 @@ static int decode_deactivate(struct qaic_device *qdev, void *trans,
 	u32 dbc_id = le32_to_cpu(in_trans->dbc_id);
 	u32 status = le32_to_cpu(in_trans->status);
 
-	if (dbc_id >= QAIC_NUM_DBC)
+	if (dbc_id >= QAIC_NUM_DBC) {
+		trace_decode_error(qdev, "deactivate invalid dbc id");
 		/*
 		 * The device assigned an invalid resource, which should never
 		 * happen.  Inject an error so the user can try to recover.
 		 */
 		return -ENODEV;
-	if (status)
+	}
+	if (status) {
+		trace_decode_error(qdev, "deactivate device failed");
 		/*
 		 * Releasing resources failed on the device side, which puts
 		 * us in a bind since they may still be in use, so be safe and
 		 * do nothing.
 		 */
 		return -ENODEV;
+	}
 
 	release_dbc(qdev, dbc_id);
 	*msg_len += sizeof(*in_trans);
 	return 0;
 }
 
-static int decode_status(void *trans, struct manage_msg *user_msg,
-			 u32 *user_len)
+static int decode_status(struct qaic_device *qdev, void *trans,
+			 struct qaic_manage_msg *user_msg, u32 *user_len)
 {
 	struct _trans_status_from_dev *in_trans = trans;
-	struct manage_trans_status_from_dev *out_trans;
+	struct qaic_manage_trans_status_from_dev *out_trans;
 	u32 len;
 
 	out_trans = (void *)user_msg->data + user_msg->len;
 
 	len = le32_to_cpu(in_trans->hdr.len);
-	if (user_msg->len + len > MANAGE_MAX_MSG_LENGTH)
+	if (user_msg->len + len > QAIC_MANAGE_MAX_MSG_LENGTH) {
+		trace_decode_error(qdev, "status trans exceeds msg len");
 		return -ENOSPC;
+	}
 
 	out_trans->hdr.type = le32_to_cpu(TRANS_STATUS_FROM_DEV);
 	out_trans->hdr.len = len;
@@ -607,40 +664,49 @@ static int decode_status(void *trans, struct manage_msg *user_msg,
 	return 0;
 }
 
-static int decode_message(struct qaic_device *qdev, struct manage_msg *user_msg,
-			  struct _msg *msg, struct ioctl_resources *resources)
+static int decode_message(struct qaic_device *qdev,
+			  struct qaic_manage_msg *user_msg, struct _msg *msg,
+			  struct ioctl_resources *resources,
+			  struct qaic_user *usr)
 {
 	struct _trans_hdr *trans_hdr;
 	u32 msg_len = 0;
 	int ret;
 	int i;
 
-	if (msg->hdr.len > sizeof(*msg))
+	if (msg->hdr.len > sizeof(*msg)) {
+		trace_decode_error(qdev, "msg to decode len greater than size");
 		return -EINVAL;
+	}
 
 	user_msg->len = 0;
 	user_msg->count = le32_to_cpu(msg->hdr.count);
 
 	for (i = 0; i < user_msg->count; ++i) {
 		trans_hdr = (struct _trans_hdr *)(msg->data + msg_len);
-		if (msg_len + trans_hdr->len > msg->hdr.len)
+		if (msg_len + trans_hdr->len > msg->hdr.len) {
+			trace_decode_error(qdev, "trans len exceeds msg len");
 			return -EINVAL;
+		}
 
 		switch (trans_hdr->type) {
 		case TRANS_PASSTHROUGH_FROM_DEV:
-			ret = decode_passthrough(trans_hdr, user_msg, &msg_len);
+			ret = decode_passthrough(qdev, trans_hdr, user_msg,
+						 &msg_len);
 			break;
 		case TRANS_ACTIVATE_FROM_DEV:
 			ret = decode_activate(qdev, trans_hdr, user_msg,
-					      &msg_len, resources);
+					      &msg_len, resources, usr);
 			break;
 		case TRANS_DEACTIVATE_FROM_DEV:
 			ret = decode_deactivate(qdev, trans_hdr, &msg_len);
 			break;
 		case TRANS_STATUS_FROM_DEV:
-			ret = decode_status(trans_hdr, user_msg, &msg_len);
+			ret = decode_status(qdev, trans_hdr, user_msg,
+					    &msg_len);
 			break;
 		default:
+			trace_decode_error(qdev, "unknown trans type");
 			return -EINVAL;
 		}
 
@@ -648,8 +714,10 @@ static int decode_message(struct qaic_device *qdev, struct manage_msg *user_msg,
 			return ret;
 	}
 
-	if (msg_len != trans_hdr->len)
+	if (msg_len != (msg->hdr.len - sizeof(msg->hdr))) {
+		trace_decode_error(qdev, "decoded msg ended up longer than final trans");
 		return -EINVAL;
+	}
 
 	return 0;
 }
@@ -736,7 +804,7 @@ static void *msg_xfer(struct qaic_device *qdev, struct wrapper_msg *wrapper,
 }
 
 static int qaic_manage(struct qaic_device *qdev, struct qaic_user *usr,
-		      struct manage_msg *user_msg)
+		       struct qaic_manage_msg *user_msg)
 {
 	struct ioctl_resources resources;
 	struct wrapper_msg *wrapper;
@@ -747,15 +815,17 @@ static int qaic_manage(struct qaic_device *qdev, struct qaic_user *usr,
 	INIT_LIST_HEAD(&resources.dma_xfers);
 	resources.buf = NULL;
 
-	if (user_msg->len > MANAGE_MAX_MSG_LENGTH ||
+	if (user_msg->len > QAIC_MANAGE_MAX_MSG_LENGTH ||
 	    user_msg->count >
-	    MANAGE_MAX_MSG_LENGTH / sizeof(struct manage_trans_hdr)) {
+	    QAIC_MANAGE_MAX_MSG_LENGTH / sizeof(struct qaic_manage_trans_hdr)) {
+		trace_manage_error(qdev, usr, "msg from userspace too long or too many transactions");
 		ret = -EINVAL;
 		goto out;
 	}
 
 	wrapper = kzalloc(sizeof(*wrapper), GFP_KERNEL);
 	if (!wrapper) {
+		trace_manage_error(qdev, usr, "unable to alloc for encode");
 		ret = -ENOMEM;
 		goto out;
 	}
@@ -782,19 +852,12 @@ static int qaic_manage(struct qaic_device *qdev, struct qaic_user *usr,
 	/* msg_xfer releases the mutex */
 	rsp = msg_xfer(qdev, wrapper, qdev->next_seq_num - 1, false);
 	if (IS_ERR(rsp)) {
+		trace_manage_error(qdev, usr, "failed to xmit to device");
 		ret = PTR_ERR(rsp);
 		goto lock_failed;
 	}
 
-	ret = decode_message(qdev, user_msg, rsp, &resources);
-
-	free_dma_xfers(qdev, &resources);
-
-	if (resources.status)
-		free_dbc_buf(qdev, &resources);
-	else
-		save_dbc_buf(qdev, &resources, usr);
-	ret = 0;
+	ret = decode_message(qdev, user_msg, rsp, &resources, usr);
 
 	kfree(rsp);
 lock_failed:
@@ -809,16 +872,18 @@ out:
 int qaic_manage_ioctl(struct qaic_device *qdev, struct qaic_user *usr,
 		      unsigned long arg)
 {
-	struct manage_msg *user_msg;
+	struct qaic_manage_msg *user_msg;
 	int ret;
 
 	user_msg = kmalloc(sizeof(*user_msg), GFP_KERNEL);
 	if (!user_msg) {
+		trace_manage_error(qdev, usr, "no mem for userspace message");
 		ret = -ENOMEM;
 		goto out;
 	}
 
 	if (copy_from_user(user_msg, (void __user *)arg, sizeof(*user_msg))) {
+		trace_manage_error(qdev, usr, "failed to copy from userspace");
 		ret = -EFAULT;
 		goto copy_from_user_failed;
 	}
@@ -827,8 +892,10 @@ int qaic_manage_ioctl(struct qaic_device *qdev, struct qaic_user *usr,
 	if (ret)
 		goto copy_from_user_failed;
 
-	if (copy_to_user((void __user *)arg, user_msg, sizeof(*user_msg)))
+	if (copy_to_user((void __user *)arg, user_msg, sizeof(*user_msg))) {
+		trace_manage_error(qdev, usr, "failed to copy to userspace");
 		ret = -EFAULT;
+	}
 
 copy_from_user_failed:
 	kfree(user_msg);
@@ -840,9 +907,9 @@ int get_cntl_version(struct qaic_device *qdev, struct qaic_user *usr,
 		     u16 *major, u16 *minor)
 {
 	int ret;
-	struct manage_msg *user_msg;
-	struct manage_trans_status_to_dev *status_query;
-	struct manage_trans_status_from_dev *status_result;
+	struct qaic_manage_msg *user_msg;
+	struct qaic_manage_trans_status_to_dev *status_query;
+	struct qaic_manage_trans_status_from_dev *status_result;
 
 	user_msg = kmalloc(sizeof(*user_msg), GFP_KERNEL);
 	if (!user_msg) {
@@ -852,14 +919,15 @@ int get_cntl_version(struct qaic_device *qdev, struct qaic_user *usr,
 	user_msg->len = sizeof(*status_query);
 	user_msg->count = 1;
 
-	status_query = (struct	manage_trans_status_to_dev *)user_msg->data;
+	status_query = (struct qaic_manage_trans_status_to_dev *)user_msg->data;
 	status_query->hdr.type = TRANS_STATUS_FROM_USR;
 	status_query->hdr.len = sizeof(status_query->hdr);
 
 	ret = qaic_manage(qdev, usr, user_msg);
 	if (ret)
 		goto kfree_user_msg;
-	status_result = (struct	manage_trans_status_from_dev *)user_msg->data;
+	status_result =
+		(struct qaic_manage_trans_status_from_dev *)user_msg->data;
 	*major = status_result->major;
 	*minor = status_result->minor;
 

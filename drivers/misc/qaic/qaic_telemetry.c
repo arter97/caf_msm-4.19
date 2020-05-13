@@ -90,10 +90,10 @@ struct resp_work {
 
 static void free_wrapper(struct kref *ref)
 {
-        struct wrapper_msg *wrapper = container_of(ref, struct wrapper_msg,
-                                                   ref_count);
+	struct wrapper_msg *wrapper = container_of(ref, struct wrapper_msg,
+						   ref_count);
 
-        kfree(wrapper);
+	kfree(wrapper);
 }
 
 static int telemetry_request(struct qaic_device *qdev, u8 cmd, u8 cmd_type,
@@ -333,6 +333,7 @@ static umode_t qaic_is_visible(const void *data, enum hwmon_sensor_types type,
 		default:
 			return 0444;
 		}
+		break;
 	case hwmon_temp:
 		switch (attr) {
 		case hwmon_temp_input: /* fallthrough */
@@ -343,6 +344,7 @@ static umode_t qaic_is_visible(const void *data, enum hwmon_sensor_types type,
 		case hwmon_temp_emergency:
 			return 0644;
 		}
+		break;
 	default:
 		return 0;
 	}
@@ -630,20 +632,20 @@ static void qaic_telemetry_mhi_dl_xfer_cb(struct mhi_device *mhi_dev,
 }
 
 static const struct mhi_device_id qaic_telemetry_mhi_match_table[] = {
-        { .chan = "QAIC_TELEMETRY", },
-        {},
+	{ .chan = "QAIC_TELEMETRY", },
+	{},
 };
 
 static struct mhi_driver qaic_telemetry_mhi_driver = {
-        .id_table = qaic_telemetry_mhi_match_table,
-        .remove = qaic_telemetry_mhi_remove,
-        .probe = qaic_telemetry_mhi_probe,
-        .ul_xfer_cb = qaic_telemetry_mhi_ul_xfer_cb,
-        .dl_xfer_cb = qaic_telemetry_mhi_dl_xfer_cb,
-        .driver = {
-                .name = "qaic_telemetry",
-                .owner = THIS_MODULE,
-        },
+	.id_table = qaic_telemetry_mhi_match_table,
+	.remove = qaic_telemetry_mhi_remove,
+	.probe = qaic_telemetry_mhi_probe,
+	.ul_xfer_cb = qaic_telemetry_mhi_ul_xfer_cb,
+	.dl_xfer_cb = qaic_telemetry_mhi_dl_xfer_cb,
+	.driver = {
+		.name = "qaic_telemetry",
+		.owner = THIS_MODULE,
+	},
 };
 
 void qaic_telemetry_register(void)
@@ -662,16 +664,16 @@ void qaic_telemetry_unregister(void)
 
 void wake_all_telemetry(struct qaic_device *qdev)
 {
-        struct xfer_queue_elem *elem;
-        struct xfer_queue_elem *i;
+	struct xfer_queue_elem *elem;
+	struct xfer_queue_elem *i;
 
-        mutex_lock(&qdev->tele_mutex);
-        list_for_each_entry_safe(elem, i, &qdev->tele_xfer_list, list) {
-                list_del_init(&elem->list);
-                complete_all(&elem->xfer_done);
-        }
+	mutex_lock(&qdev->tele_mutex);
+	list_for_each_entry_safe(elem, i, &qdev->tele_xfer_list, list) {
+		list_del_init(&elem->list);
+		complete_all(&elem->xfer_done);
+	}
 	qdev->tele_lost_buf = false;
-        mutex_unlock(&qdev->tele_mutex);
+	mutex_unlock(&qdev->tele_mutex);
 }
 
 #else

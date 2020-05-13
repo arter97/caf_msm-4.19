@@ -3,6 +3,9 @@
 # Makefile for QTI Cloud AI accelerators driver
 #
 
+#setup for TRACE_INCLUDE_PATH for various build environments
+subdir-ccflags-y := -I$(src)
+
 obj-$(CONFIG_QAIC)	:= qaic.o
 
 qaic-y := \
@@ -11,4 +14,5 @@ qaic-y := \
 	qaic_control.o \
 	qaic_data.o \
 	qaic_debugfs.o \
-	qaic_telemetry.o
+	qaic_telemetry.o \
+	qaic_ras.o

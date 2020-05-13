@@ -13,6 +13,7 @@
 #include <linux/srcu.h>
 #include <linux/types.h>
 #include <linux/uaccess.h>
+#include <linux/wait.h>
 #include <uapi/misc/qaic.h>
 
 #include "qaic.h"
@@ -81,6 +82,16 @@ struct mem_handle {
 	bool			no_xfer;
 };
 
+inline int get_dbc_req_elem_size(void)
+{
+	return sizeof(struct dbc_req);
+}
+
+inline int get_dbc_rsp_elem_size(void)
+{
+	return sizeof(struct dbc_rsp);
+}
+
 static int reserve_pages(unsigned long start_pfn, unsigned long nr_pages,
 			 bool reserve)
 {
@@ -100,7 +111,7 @@ static int reserve_pages(unsigned long start_pfn, unsigned long nr_pages,
 	return 0;
 }
 
-static int alloc_handle(struct qaic_device *qdev, struct mem_req *req)
+static int alloc_handle(struct qaic_device *qdev, struct qaic_mem_req *req)
 {
 	struct mem_handle *mem;
 	struct scatterlist *sg;
@@ -281,7 +292,7 @@ static void free_handle_mem(struct kref *kref)
 	kfree(mem);
 }
 
-static int free_handle(struct qaic_device *qdev, struct mem_req *req)
+static int free_handle(struct qaic_device *qdev, struct qaic_mem_req *req)
 {
 	struct mem_handle *mem;
 	unsigned long flags;
@@ -328,7 +339,7 @@ lock_fail:
 int qaic_mem_ioctl(struct qaic_device *qdev, struct qaic_user *usr,
 		   unsigned long arg)
 {
-	struct mem_req req;
+	struct qaic_mem_req req;
 	int rcu_id;
 	int ret;
 
@@ -425,7 +436,7 @@ out:
 	return ret;
 }
 
-static bool invalid_sem(struct sem *sem)
+static bool invalid_sem(struct qaic_sem *sem)
 {
 	if (sem->val & ~SEM_VAL_MASK || sem->index & ~SEM_INDEX_MASK ||
 	    !(sem->presync == 0 || sem->presync == 1) || sem->resv ||
@@ -436,7 +447,7 @@ static bool invalid_sem(struct sem *sem)
 }
 
 static int encode_execute(struct qaic_device *qdev, struct mem_handle *mem,
-			  struct execute *exec, u16 req_id)
+			  struct qaic_execute *exec, u16 req_id)
 {
 	u8 cmd = BULK_XFER;
 	u64 db_addr = cpu_to_le64(exec->db_addr);
@@ -594,14 +605,14 @@ static int commit_execute(struct qaic_device *qdev, struct mem_handle *mem,
 	if (two_copy) {
 		avail = dbc->nelem - tail;
 		avail = min_t(u32, avail, mem->nents);
-		memcpy(dbc->req_q_base + tail * QAIC_DBC_REQ_ELEM_SIZE,
+		memcpy(dbc->req_q_base + tail * get_dbc_req_elem_size(),
 		       reqs, sizeof(*reqs) * avail);
 		reqs += avail;
 		avail = mem->nents - avail;
 		if (avail)
 			memcpy(dbc->req_q_base, reqs, sizeof(*reqs) * avail);
 	} else {
-		memcpy(dbc->req_q_base + tail * QAIC_DBC_REQ_ELEM_SIZE,
+		memcpy(dbc->req_q_base + tail * get_dbc_req_elem_size(),
 		       reqs, sizeof(*reqs) * mem->nents);
 	}
 
@@ -616,7 +627,7 @@ int qaic_execute_ioctl(struct qaic_device *qdev, struct qaic_user *usr,
 		       unsigned long arg)
 {
 	struct mem_handle *mem;
-	struct execute *exec;
+	struct qaic_execute *exec;
 	unsigned long flags;
 	bool queued;
 	u16 req_id;
@@ -803,7 +814,8 @@ int qaic_wait_exec_ioctl(struct qaic_device *qdev, struct qaic_user *usr,
 			 unsigned long arg)
 {
 	struct mem_handle *mem;
-	struct wait_exec *wait;
+	struct qaic_wait_exec *wait;
+	unsigned int timeout;
 	int handle;
 	int dbc_id;
 	int rcu_id;
@@ -817,6 +829,11 @@ int qaic_wait_exec_ioctl(struct qaic_device *qdev, struct qaic_user *usr,
 
 	if (copy_from_user(wait, (void __user *)arg, sizeof(*wait))) {
 		ret = -EFAULT;
+		goto free_wait;
+	}
+
+	if (wait->resv) {
+		ret = -EINVAL;
 		goto free_wait;
 	}
 
@@ -852,8 +869,9 @@ int qaic_wait_exec_ioctl(struct qaic_device *qdev, struct qaic_user *usr,
 	/* we don't want the mem handle freed under us in case of deactivate */
 	kref_get(&mem->ref_count);
 	srcu_read_unlock(&qdev->dbc[dbc_id].ch_lock, rcu_id);
+	timeout = wait->timeout ? wait->timeout : wait_exec_default_timeout;
 	ret = wait_for_completion_interruptible_timeout(&mem->xfer_done,
-				msecs_to_jiffies(wait_exec_default_timeout));
+				msecs_to_jiffies(timeout));
 	rcu_id = srcu_read_lock(&qdev->dbc[dbc_id].ch_lock);
 	if (!ret)
 		ret = -ETIMEDOUT;
@@ -929,6 +947,8 @@ void release_dbc(struct qaic_device *qdev, u32 dbc_id)
 		}
 		kref_put(&mem->ref_count, free_handle_mem);
 	}
+	qdev->dbc[dbc_id].in_use = false;
+	wake_up(&qdev->dbc[dbc_id].dbc_release);
 }
 
 void qaic_data_get_fifo_info(struct dma_bridge_chan *dbc, u32 *head, u32 *tail)

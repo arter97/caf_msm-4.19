@@ -389,7 +389,14 @@ static struct mhi_controller_config aic100_config = {
 
 static int mhi_link_status(struct mhi_controller *mhi_cntl, void *priv)
 {
-	return 0;
+	u16 dev_id;
+	int ret;
+
+	/* try reading device id, if dev id don't match, link is down */
+	ret = pci_read_config_word(to_pci_dev(mhi_cntl->dev), PCI_DEVICE_ID,
+								&dev_id);
+
+	return (ret || dev_id != mhi_cntl->dev_id) ? -EIO : 0;
 }
 
 static int mhi_runtime_get(struct mhi_controller *mhi_cntl, void *priv)

@@ -15,12 +15,16 @@
 #include <linux/sched.h>
 #include <linux/spinlock.h>
 #include <linux/workqueue.h>
+#include <linux/wait.h>
 #include <uapi/misc/qaic.h>
 
 #include "mhi_controller.h"
 #include "qaic.h"
 #include "qaic_debugfs.h"
+#include "qaic_ras.h"
 #include "qaic_telemetry.h"
+#define CREATE_TRACE_POINTS
+#include "qaic_trace.h"
 
 #define PCI_VENDOR_ID_QTI		0x17cb
 
@@ -159,9 +163,7 @@ static long qaic_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		return -ENODEV;
 	}
 
-	pci_dbg(qdev->pdev, "%s pid:%d cmd:0x%x (%c nr=%d len=%d dir=%d)\n",
-		__func__, current->pid, cmd, _IOC_TYPE(cmd), _IOC_NR(cmd),
-		_IOC_SIZE(cmd), _IOC_DIR(cmd));
+	trace_qaic_ioctl(qdev, usr, cmd);
 
 	qdev_rcu_id = srcu_read_lock(&qdev->dev_lock);
 	if (qdev->in_reset) {
@@ -179,7 +181,7 @@ static long qaic_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 	switch (nr) {
 	case QAIC_IOCTL_MANAGE_NR:
 		if (_IOC_DIR(cmd) != (_IOC_READ | _IOC_WRITE) ||
-		    _IOC_SIZE(cmd) != sizeof(struct manage_msg)) {
+		    _IOC_SIZE(cmd) != sizeof(struct qaic_manage_msg)) {
 			ret = -EINVAL;
 			break;
 		}
@@ -187,7 +189,7 @@ static long qaic_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		break;
 	case QAIC_IOCTL_MEM_NR:
 		if (_IOC_DIR(cmd) != (_IOC_READ | _IOC_WRITE) ||
-		    _IOC_SIZE(cmd) != sizeof(struct mem_req)) {
+		    _IOC_SIZE(cmd) != sizeof(struct qaic_mem_req)) {
 			ret = -EINVAL;
 			break;
 		}
@@ -195,7 +197,7 @@ static long qaic_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		break;
 	case QAIC_IOCTL_EXECUTE_NR:
 		if (_IOC_DIR(cmd) != _IOC_WRITE ||
-		    _IOC_SIZE(cmd) != sizeof(struct execute)) {
+		    _IOC_SIZE(cmd) != sizeof(struct qaic_execute)) {
 			ret = -EINVAL;
 			break;
 		}
@@ -203,7 +205,7 @@ static long qaic_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		break;
 	case QAIC_IOCTL_WAIT_EXEC_NR:
 		if (_IOC_DIR(cmd) != _IOC_WRITE ||
-		    _IOC_SIZE(cmd) != sizeof(struct wait_exec)) {
+		    _IOC_SIZE(cmd) != sizeof(struct qaic_wait_exec)) {
 			ret = -EINVAL;
 			break;
 		}
@@ -475,6 +477,7 @@ static int qaic_pci_probe(struct pci_dev *pdev,
 		qdev->dbc[i].id = i;
 		INIT_LIST_HEAD(&qdev->dbc[i].xfer_list);
 		init_srcu_struct(&qdev->dbc[i].ch_lock);
+		init_waitqueue_head(&qdev->dbc[i].dbc_release);
 	}
 
 	qdev->bars = pci_select_bars(pdev, IORESOURCE_MEM);
@@ -720,6 +723,7 @@ static int __init qaic_init(void)
 	}
 
 	qaic_telemetry_register();
+	qaic_ras_register();
 	pr_debug("qaic: init success\n");
 	goto out;
 
@@ -743,6 +747,7 @@ static void __exit qaic_exit(void)
 	pci_unregister_driver(&qaic_pci_driver);
 	mhi_driver_unregister(&qaic_mhi_driver);
 	qaic_telemetry_unregister();
+	qaic_ras_unregister();
 	class_destroy(qaic_class);
 	unregister_chrdev_region(MKDEV(qaic_major, 0), QAIC_MAX_MINORS);
 	idr_destroy(&qaic_devs);
@@ -754,4 +759,4 @@ module_exit(qaic_exit);
 
 MODULE_DESCRIPTION("QTI Cloud AI Accelerators Driver");
 MODULE_LICENSE("GPL v2");
-MODULE_VERSION("1.7.13"); /* MAJOR.MINOR.PATCH */
+MODULE_VERSION("3.0.3"); /* MAJOR.MINOR.PATCH */

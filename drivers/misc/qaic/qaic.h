@@ -15,11 +15,10 @@
 #include <linux/pci.h>
 #include <linux/spinlock.h>
 #include <linux/srcu.h>
+#include <linux/wait.h>
 #include <linux/workqueue.h>
 
 #define QAIC_NUM_DBC		16
-#define QAIC_DBC_REQ_ELEM_SIZE	0x40
-#define QAIC_DBC_RSP_ELEM_SIZE	0x4
 #define QAIC_DBC_BASE		0x20000
 #define QAIC_DBC_SIZE		0x1000
 
@@ -51,6 +50,8 @@ struct dma_bridge_chan {
 	struct list_head	xfer_list;
 	struct srcu_struct	ch_lock;
 	struct dentry		*debugfs_root;
+	bool			in_use;
+	wait_queue_head_t	dbc_release;
 };
 
 struct qaic_device {
@@ -82,8 +83,11 @@ struct qaic_device {
 	struct mutex		tele_mutex;
 	bool			tele_lost_buf;
 	struct workqueue_struct	*tele_wq;
+	struct mhi_device	*ras_ch;
 };
 
+int get_dbc_req_elem_size(void);
+int get_dbc_rsp_elem_size(void);
 int get_cntl_version(struct qaic_device *qdev, struct qaic_user *usr,
 		     u16 *major, u16 *minor);
 int qaic_manage_ioctl(struct qaic_device *qdev, struct qaic_user *usr,

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-only
-/* Copyright (c) 2018-2019, The Linux Foundation. All rights reserved.*/
+/* Copyright (c) 2018-2020, The Linux Foundation. All rights reserved.*/
 
 #include <linux/cdev.h>
 #include <linux/device.h>
@@ -474,6 +474,7 @@ static int mhi_uci_open(struct inode *inode, struct file *filp)
 	mutex_lock(&uci_dev->mutex);
 	if (!uci_dev->enabled) {
 		MSG_ERR("Node exist, but not in active state!\n");
+		ret = -ENODEV;
 		goto error_open_chan;
 	}
 
