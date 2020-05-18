@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-only
-/* Copyright (c) 2018-2019, The Linux Foundation. All rights reserved.*/
+/* Copyright (c) 2018-2020, The Linux Foundation. All rights reserved.*/
 
 #include <linux/debugfs.h>
 #include <linux/device.h>
@@ -125,6 +125,30 @@ long mhi_ioctl(struct mhi_device *mhi_dev, unsigned int cmd, unsigned long arg)
 }
 EXPORT_SYMBOL(mhi_ioctl);
 
+static int mhi_dtr_queue_inbound(struct mhi_controller *mhi_cntrl)
+{
+	struct mhi_device *mhi_dev = mhi_cntrl->dtr_dev;
+	int nr_trbs = mhi_get_no_free_descriptors(mhi_dev, DMA_FROM_DEVICE);
+	size_t mtu = mhi_dev->mtu;
+	void *buf;
+	int ret = -EIO, i;
+
+	for (i = 0; i < nr_trbs; i++) {
+		buf = kmalloc(mtu, GFP_KERNEL);
+		if (!buf)
+			return -ENOMEM;
+
+		ret = mhi_queue_transfer(mhi_dev, DMA_FROM_DEVICE, buf, mtu,
+					 MHI_EOT);
+		if (ret) {
+			kfree(buf);
+			return ret;
+		}
+	}
+
+	return ret;
+}
+
 static void mhi_dtr_dl_xfer_cb(struct mhi_device *mhi_dev,
 			       struct mhi_result *mhi_result)
 {
@@ -132,6 +156,11 @@ static void mhi_dtr_dl_xfer_cb(struct mhi_device *mhi_dev,
 	struct dtr_ctrl_msg *dtr_msg = mhi_result->buf_addr;
 	u32 chan;
 	spinlock_t *res_lock;
+
+	if (mhi_result->transaction_status == -ENOTCONN) {
+		kfree(mhi_result->buf_addr);
+		return;
+	}
 
 	if (mhi_result->bytes_xferd != sizeof(*dtr_msg)) {
 		MHI_ERR("Unexpected length %zu received\n",
@@ -165,6 +194,9 @@ static void mhi_dtr_dl_xfer_cb(struct mhi_device *mhi_dev,
 		mhi_dev->tiocm |= TIOCM_RI;
 	spin_unlock_irq(res_lock);
 
+	mhi_queue_transfer(mhi_cntrl->dtr_dev, DMA_FROM_DEVICE, mhi_result->buf_addr,
+		mhi_cntrl->dtr_dev->mtu, MHI_EOT);
+
 	/* Notify the update */
 	mhi_notify(mhi_dev, MHI_CB_DTR_SIGNAL);
 }
@@ -195,9 +227,13 @@ static int mhi_dtr_probe(struct mhi_device *mhi_dev,
 
 	MHI_LOG("Enter for DTR control channel\n");
 
+	mhi_dev->mtu = min_t(size_t, id->driver_data, mhi_dev->mtu);
 	ret = mhi_prepare_for_transfer(mhi_dev);
 	if (!ret)
 		mhi_cntrl->dtr_dev = mhi_dev;
+
+	if (!ret)
+		ret = mhi_dtr_queue_inbound(mhi_cntrl);
 
 	MHI_LOG("Exit with ret:%d\n", ret);
 
@@ -205,7 +241,7 @@ static int mhi_dtr_probe(struct mhi_device *mhi_dev,
 }
 
 static const struct mhi_device_id mhi_dtr_table[] = {
-	{ .chan = "IP_CTRL" },
+	{ .chan = "IP_CTRL", .driver_data = sizeof(struct dtr_ctrl_msg) },
 	{},
 };
 

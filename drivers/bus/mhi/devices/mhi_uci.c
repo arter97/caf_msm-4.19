@@ -17,6 +17,7 @@
 #include <linux/wait.h>
 #include <linux/uaccess.h>
 #include <linux/mhi.h>
+#include <linux/tty.h>
 
 #define DEVICE_NAME "mhi"
 #define MHI_UCI_DRIVER_NAME "mhi_uci"
@@ -51,6 +52,7 @@ struct uci_dev {
 	bool enabled;
 	u32 tiocm;
 	void *ipc_log;
+	struct ktermios	termios;
 };
 
 struct mhi_uci_drv {
@@ -166,6 +168,34 @@ static long mhi_uci_ioctl(struct file *file,
 			spin_lock_bh(&uci_chan->lock);
 			uci_dev->tiocm = mhi_dev->tiocm;
 			spin_unlock_bh(&uci_chan->lock);
+		}
+	}
+
+	if (uci_dev->enabled) {
+		switch (cmd) {
+		case TCGETS:
+#ifndef TCGETS2
+			ret = kernel_termios_to_user_termios((struct termios __user *)arg, &uci_dev->termios);
+#else
+			ret = kernel_termios_to_user_termios_1((struct termios __user *)arg, &uci_dev->termios);
+#endif
+		break;
+
+		case TCSETSF:
+		case TCSETS:
+#ifndef TCGETS2
+			ret = user_termios_to_kernel_termios(&uci_dev->termios, (struct termios __user *)arg);
+#else
+			ret = user_termios_to_kernel_termios_1(&uci_dev->termios, (struct termios __user *)arg);
+#endif
+		break;
+
+		case TCFLSH:
+			ret = 0;
+		break;
+
+		default:
+		break;
 		}
 	}
 
@@ -289,6 +319,10 @@ static ssize_t mhi_uci_write(struct file *file,
 
 		spin_unlock_bh(&uci_chan->lock);
 
+		nr_avail = mhi_get_no_free_descriptors(mhi_dev, DMA_TO_DEVICE);
+		if ((nr_avail == 0) && (file->f_flags & O_NONBLOCK))
+			return -EAGAIN;
+
 		/* wait for free descriptors */
 		ret = wait_event_interruptible(uci_chan->wq,
 			(!uci_dev->enabled) ||
@@ -379,6 +413,10 @@ static ssize_t mhi_uci_read(struct file *file,
 		MSG_VERB("No data available to read waiting\n");
 
 		spin_unlock_bh(&uci_chan->lock);
+
+		if (file->f_flags & O_NONBLOCK)
+			return -EAGAIN;
+
 		ret = wait_event_interruptible(uci_chan->wq,
 				(!uci_dev->enabled ||
 				 !list_empty(&uci_chan->pending)));
@@ -626,6 +664,7 @@ static int mhi_uci_probe(struct mhi_device *mhi_dev,
 		mutex_init(&uci_chan->read_lock);
 	}
 
+	uci_dev->termios = tty_std_termios;
 	uci_dev->mtu = min_t(size_t, id->driver_data, mhi_dev->mtu);
 	uci_dev->actual_mtu = uci_dev->mtu -  sizeof(struct uci_buf);
 	mhi_device_set_devdata(mhi_dev, uci_dev);
