@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2014-2015, 2017-2019, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2014-2015, 2017-2020, The Linux Foundation. All rights reserved.
  */
 
 #include <linux/coresight.h>
@@ -38,6 +38,8 @@ static struct gpio_map {
 	{"qcom,mdm2ap-vddmin-gpio",     MDM2AP_VDDMIN},
 	{"qcom,ap2mdm-pmic-pwr-en-gpio", AP2MDM_PMIC_PWR_EN},
 	{"qcom,mdm-link-detect-gpio", MDM_LINK_DETECT},
+	{"qcom,m2-full-card-pwr-gpio", MDM2_CARD_PWR},
+	{"qcom,m2-rst-gpio", MDM2_RESET},
 };
 
 /* Required gpios */
@@ -1145,6 +1147,85 @@ err_destroy_wrkq:
 	return ret;
 }
 
+enum M2_CTRL_GPIO {
+	M2_FULL_CARD_PWR = 0,
+	M2_RST,
+	M2_CTRL_MAX
+};
+struct m2_gpio_info{
+	char *name;
+	uint32_t num;
+};
+
+static struct m2_gpio_info gpio_info[M2_CTRL_MAX] = {
+        {"qcom,m2-full-card-pwr-gpio", 0},
+        {"qcom,m2-rst-gpio", 0}
+};
+
+#define M2_DEBUG_LOG(fmt, ...) pr_err("[D][%s] " fmt, __func__, ##__VA_ARGS__)
+
+static int sdx55m_m2_setup_hw(struct mdm_ctrl *mdm,
+					const struct mdm_ops *ops,
+					struct platform_device *pdev)
+{
+	int ret;
+	struct device_node *node;
+	struct pinctrl *pinctrl;
+	struct pinctrl_state *pins_default;
+
+	M2_DEBUG_LOG("m2_setup_hw: entry!\n");
+
+	node = pdev->dev.of_node;
+
+	pinctrl = devm_pinctrl_get(&pdev->dev);
+	if (IS_ERR_OR_NULL(pinctrl)) {
+		dev_err(&pdev->dev,"m2_setup_hw: Get pinctrl error!\n");
+		return -1;
+	}
+	pins_default = pinctrl_lookup_state(pinctrl, "default");
+	if (IS_ERR(pins_default)) {
+		dev_err(&pdev->dev, "m2_setup_hw: Get pinctrl default error!\n");
+		return -1;
+	}
+
+	ret = of_get_named_gpio(node, gpio_info[M2_FULL_CARD_PWR].name, 0);
+	if (ret < 0) {
+	            dev_err(&pdev->dev, "Failed to get M2_FULL_CARD_PWR gpio !\n");
+	            return -1;
+	}
+	gpio_info[M2_FULL_CARD_PWR].num = ret;
+
+	ret = of_get_named_gpio(node, gpio_info[M2_RST].name, 0);
+	if (ret < 0) {
+	            dev_err(&pdev->dev, "Failed to get M2_RST gpio !\n");
+	            return -1;
+	}
+	gpio_info[M2_RST].num = ret;
+
+	M2_DEBUG_LOG("m2_setup_hw: M2_FULL_CARD_PWR = %d, M2_RST = %d.\n",
+			gpio_info[M2_FULL_CARD_PWR].num,
+			gpio_info[M2_RST].num);
+
+	if (gpio_request(gpio_info[M2_FULL_CARD_PWR].num, gpio_info[M2_FULL_CARD_PWR].name)){
+		dev_err(&pdev->dev, "Failed to configure M2_FULL_CARD_PWR gpio!\n");
+	}
+	else
+		gpio_direction_output(gpio_info[M2_FULL_CARD_PWR].num, 1);
+
+	usleep_range(70000,70005);
+
+	if (gpio_request(gpio_info[M2_RST].num, gpio_info[M2_RST].name)){
+		dev_err(&pdev->dev, "Failed to configure M2_RST gpio !\n");
+	}
+	else
+		gpio_direction_output(gpio_info[M2_RST].num, 1);
+
+	M2_DEBUG_LOG("m2_setup_hw: exit!\n");
+
+	return 0;
+}
+
+
 static struct esoc_clink_ops mdm_cops = {
 	.cmd_exe = mdm_cmd_exe,
 	.get_status = mdm_get_status,
@@ -1170,6 +1251,12 @@ static struct mdm_ops sdx55m_ops = {
 	.pon_ops = &sdx55m_pon_ops,
 };
 
+static struct mdm_ops sdx55m_m2_ops = {
+	.clink_ops = &mdm_cops,
+	.config_hw = sdx55m_m2_setup_hw,
+	.pon_ops = &sdx55m_m2_pon_ops,
+};
+
 static const struct of_device_id mdm_dt_match[] = {
 	{ .compatible = "qcom,ext-mdm9x55",
 		.data = &mdm9x55_ops, },
@@ -1177,6 +1264,8 @@ static const struct of_device_id mdm_dt_match[] = {
 		.data = &sdx50m_ops, },
 	{ .compatible = "qcom,ext-sdx55m",
 		.data = &sdx55m_ops, },
+	{ .compatible = "qcom,ext-sdx55m_m2",
+		.data = &sdx55m_m2_ops, },
 	{},
 };
 MODULE_DEVICE_TABLE(of, mdm_dt_match);
@@ -1188,6 +1277,8 @@ static int mdm_probe(struct platform_device *pdev)
 	struct device_node *node = pdev->dev.of_node;
 	struct mdm_ctrl *mdm;
 	int ret;
+
+	M2_DEBUG_LOG("mdm_probe: entry!\n");
 
 	match = of_match_node(mdm_dt_match, node);
 	if (IS_ERR_OR_NULL(match))

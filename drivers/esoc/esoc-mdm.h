@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * Copyright (c) 2014-2015, 2017-2019, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2014-2015, 2017-2020, The Linux Foundation. All rights reserved.
  */
 
 #ifndef __ESOC_MDM_H__
@@ -56,6 +56,8 @@ enum mdm_gpio {
 	MDM2AP_STATUS,
 	MDM2AP_VDDMIN,
 	MDM_LINK_DETECT,
+	MDM2_RESET,
+	MDM2_CARD_PWR,
 	NUM_GPIOS,
 };
 
@@ -161,4 +163,5 @@ static inline int mdm_pon_setup(struct mdm_ctrl *mdm)
 extern struct mdm_pon_ops mdm9x55_pon_ops;
 extern struct mdm_pon_ops sdx50m_pon_ops;
 extern struct mdm_pon_ops sdx55m_pon_ops;
+extern struct mdm_pon_ops sdx55m_m2_pon_ops;
 #endif

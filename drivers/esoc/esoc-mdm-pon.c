@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2014-2015, 2017-2019, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2014-2015, 2017-2020, The Linux Foundation. All rights reserved.
  */
 
 #include "esoc-mdm.h"
@@ -269,6 +269,38 @@ static int mdm4x_pon_setup(struct mdm_ctrl *mdm)
 	return 0;
 }
 
+static int sdx55m_m2_toggle_soft_reset(struct mdm_ctrl *mdm, bool atomic)
+{
+	int soft_reset_direction_assert = 0,
+	    soft_reset_direction_de_assert = 1;
+
+	esoc_mdm_log("RESET GPIO value (before doing a reset): %d\n",
+			gpio_get_value(MDM_GPIO(mdm, MDM2_RESET)));
+	gpio_direction_output(MDM_GPIO(mdm, MDM2_RESET),
+			soft_reset_direction_assert);
+	mdelay(700);
+
+	gpio_direction_output(MDM_GPIO(mdm, MDM2_RESET),
+			soft_reset_direction_de_assert);
+
+	return 0;
+}
+
+static int sdx55m_m2_power_down(struct mdm_ctrl *mdm)
+{
+	struct device *dev = mdm->dev;
+	int soft_power_direction_assert = 0,
+	    soft_power_direction_de_assert = 1;
+
+	gpio_direction_output(MDM_GPIO(mdm, MDM2_CARD_PWR),
+			soft_power_direction_de_assert);
+	dev_dbg(dev, "Doing a power down\n");
+	msleep(2000);
+	gpio_direction_output(MDM_GPIO(mdm, MDM2_CARD_PWR),
+			soft_power_direction_assert);
+	return 0;
+}
+
 struct mdm_pon_ops mdm9x55_pon_ops = {
 	.pon = mdm4x_do_first_power_on,
 	.soft_reset = mdm9x55_toggle_soft_reset,
@@ -291,4 +323,9 @@ struct mdm_pon_ops sdx55m_pon_ops = {
 	.pon = mdm4x_do_first_power_on,
 	.soft_reset = sdx55m_toggle_soft_reset,
 	.poff_force = sdx55m_power_down,
+};
+
+struct mdm_pon_ops sdx55m_m2_pon_ops = {
+	.soft_reset = sdx55m_m2_toggle_soft_reset,
+	.poff_force = sdx55m_m2_power_down,
 };
