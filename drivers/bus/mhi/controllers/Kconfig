@@ -12,4 +12,9 @@ config MHI_QCOM
 	  bus master driver, it oversees power management operations such as
 	  suspend, resume, powering on and off the device.
 
+config ENABLE_MODEM_CARD
+	 bool "enable modem card support"
+	 help
+	  If you say yes to this option, MHI bus support for Quectel 5G card.
+
 endmenu

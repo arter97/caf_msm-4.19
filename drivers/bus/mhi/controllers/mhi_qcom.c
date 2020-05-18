@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-only
-/* Copyright (c) 2018-2019, The Linux Foundation. All rights reserved.*/
+/* Copyright (c) 2018-2020, The Linux Foundation. All rights reserved.*/
 
 #include <asm/arch_timer.h>
 #include <linux/debugfs.h>
@@ -773,8 +773,14 @@ static struct mhi_controller *mhi_register_controller(struct pci_dev *pci_dev)
 	mhi_cntrl->need_force_m3 = true;
 
 	/* setup host support for SFR retreival */
-	if (of_property_read_bool(of_node, "mhi,sfr-support"))
-		mhi_cntrl->sfr_len = MHI_MAX_SFR_LEN;
+	if (of_property_read_bool(of_node, "mhi,sfr-support")) {
+#ifdef CONFIG_ENABLE_MODEM_CARD
+		if (mhi_cntrl->dev_id == 0x0306)
+			mhi_cntrl->sfr_len = 0;
+		else
+#endif
+			mhi_cntrl->sfr_len = MHI_MAX_SFR_LEN;
+	}
 
 	of_node = of_parse_phandle(mhi_cntrl->of_node, "qcom,iommu-group", 0);
 	if (of_node) {
@@ -940,7 +946,9 @@ static struct pci_device_id mhi_pcie_device_id[] = {
 	{PCI_DEVICE(MHI_PCIE_VENDOR_ID, 0x0303)},
 	{PCI_DEVICE(MHI_PCIE_VENDOR_ID, 0x0304)},
 	{PCI_DEVICE(MHI_PCIE_VENDOR_ID, 0x0305)},
+#ifdef CONFIG_ENABLE_MODEM_CARD
 	{PCI_DEVICE(MHI_PCIE_VENDOR_ID, 0x0306)},
+#endif
 	{PCI_DEVICE(MHI_PCIE_VENDOR_ID, MHI_PCIE_DEBUG_ID)},
 	{0},
 };
