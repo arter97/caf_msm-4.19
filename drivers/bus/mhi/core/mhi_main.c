@@ -1164,6 +1164,7 @@ int mhi_process_ctrl_ev_ring(struct mhi_controller *mhi_cntrl,
 	int count = 0;
 	u32 chan;
 	struct mhi_chan *mhi_chan;
+	unsigned long flags;
 
 	/*
 	 * this is a quick check to avoid unnecessary event processing
@@ -1299,7 +1300,9 @@ int mhi_process_ctrl_ev_ring(struct mhi_controller *mhi_cntrl,
 			break;
 		}
 
+		spin_lock_irqsave(&mhi_event->lock, flags);
 		mhi_recycle_ev_ring_element(mhi_cntrl, ev_ring);
+		spin_unlock_irqrestore(&mhi_event->lock, flags);
 		local_rp = ev_ring->rp;
 		dev_rp = mhi_to_virtual(ev_ring, er_ctxt->rp);
 		count++;

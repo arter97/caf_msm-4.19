@@ -311,13 +311,13 @@ int mhi_ready_state_transition(struct mhi_controller *mhi_cntrl)
 		if (mhi_event->offload_ev || mhi_event->hw_ring)
 			continue;
 
+		spin_lock_irq(&mhi_event->lock);
 		ring->wp = ring->base + ring->len - ring->el_size;
 		*ring->ctxt_wp = ring->iommu_base + ring->len - ring->el_size;
 		/* needs to update to all cores */
 		smp_wmb();
 
 		/* ring the db for event rings */
-		spin_lock_irq(&mhi_event->lock);
 		mhi_ring_er_db(mhi_event);
 		spin_unlock_irq(&mhi_event->lock);
 	}
@@ -528,12 +528,12 @@ static int mhi_pm_mission_mode_transition(struct mhi_controller *mhi_cntrl)
 		if (mhi_event->offload_ev || !mhi_event->hw_ring)
 			continue;
 
+		spin_lock_irq(&mhi_event->lock);
 		ring->wp = ring->base + ring->len - ring->el_size;
 		*ring->ctxt_wp = ring->iommu_base + ring->len - ring->el_size;
 		/* all ring updates must get updated immediately */
 		smp_wmb();
 
-		spin_lock_irq(&mhi_event->lock);
 		if (MHI_DB_ACCESS_VALID(mhi_cntrl))
 			mhi_ring_er_db(mhi_event);
 		spin_unlock_irq(&mhi_event->lock);
