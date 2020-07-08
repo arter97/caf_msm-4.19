@@ -38,6 +38,8 @@
 
 #define SGES_PER_PAGE	(PAGE_SIZE / sizeof(struct nvme_sgl_desc))
 
+#define NVME_IO_QUEUE_SZ     1U
+
 /*
  * These can be higher, but we need to ensure that any command doesn't
  * require an sg allocation that needs more than a page of data.
@@ -220,7 +222,7 @@ static inline void _nvme_check_size(void)
 
 static inline unsigned int nvme_dbbuf_size(u32 stride)
 {
-	return ((num_possible_cpus() + 1) * 8 * stride);
+	return ((NVME_IO_QUEUE_SZ + 1) * 8 * stride);
 }
 
 static int nvme_dbbuf_dma_alloc(struct nvme_dev *dev)
@@ -1888,7 +1890,7 @@ static int nvme_setup_io_queues(struct nvme_dev *dev)
 		.pre_vectors = 1
 	};
 
-	nr_io_queues = num_possible_cpus();
+	nr_io_queues = NVME_IO_QUEUE_SZ;
 	result = nvme_set_queue_count(&dev->ctrl, &nr_io_queues);
 	if (result < 0)
 		return result;
@@ -2488,7 +2490,7 @@ static int nvme_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	if (!dev)
 		return -ENOMEM;
 
-	dev->queues = kcalloc_node(num_possible_cpus() + 1,
+	dev->queues = kcalloc_node(NVME_IO_QUEUE_SZ + 1,
 			sizeof(struct nvme_queue), GFP_KERNEL, node);
 	if (!dev->queues)
 		goto free;
