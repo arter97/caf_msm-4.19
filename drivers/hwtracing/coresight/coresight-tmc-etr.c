@@ -1367,7 +1367,9 @@ static int tmc_enable_etr_sink_sysfs(struct coresight_device *csdev)
 		|| !drvdata->usbch) {
 		spin_unlock_irqrestore(&drvdata->spinlock, flags);
 
-		if (drvdata->out_mode == TMC_ETR_OUT_MODE_MEM) {
+		if (drvdata->out_mode == TMC_ETR_OUT_MODE_MEM ||
+			(drvdata->byte_cntr->sw_usb &&
+			drvdata->out_mode == TMC_ETR_OUT_MODE_USB)) {
 			/*
 			 * ETR DDR memory is not allocated until user enables
 			 * tmc at least once. If user specifies different ETR
@@ -1383,38 +1385,13 @@ static int tmc_enable_etr_sink_sysfs(struct coresight_device *csdev)
 			}
 			coresight_cti_map_trigout(drvdata->cti_flush, 3, 0);
 			coresight_cti_map_trigin(drvdata->cti_reset, 0, 0);
-		} else if (drvdata->byte_cntr->sw_usb) {
-			if (!drvdata->etr_buf) {
-				free_buf = new_buf =
-				tmc_etr_setup_sysfs_buf(drvdata);
-				if (IS_ERR(new_buf)) {
-					return -ENOMEM;
-				}
-			}
-			coresight_cti_map_trigout(drvdata->cti_flush, 3, 0);
-			coresight_cti_map_trigin(drvdata->cti_reset, 0, 0);
-
-			drvdata->usbch = usb_qdss_open("qdss_mdm",
-						drvdata->byte_cntr,
-						usb_bypass_notifier);
-			if (IS_ERR_OR_NULL(drvdata->usbch)) {
-				dev_err(drvdata->dev, "usb_qdss_open failed\n");
-				return -ENODEV;
-			}
-		} else {
-			drvdata->usbch = usb_qdss_open("qdss", drvdata,
-							usb_notifier);
-			if (IS_ERR_OR_NULL(drvdata->usbch)) {
-				dev_err(drvdata->dev, "usb_qdss_open failed\n");
-				return -ENODEV;
-			}
 		}
 		spin_lock_irqsave(&drvdata->spinlock, flags);
 	}
 
 	if (drvdata->reading || drvdata->mode == CS_MODE_PERF) {
 		ret = -EBUSY;
-		goto out;
+		goto unlock_out;
 	}
 
 	/*
@@ -1422,8 +1399,10 @@ static int tmc_enable_etr_sink_sysfs(struct coresight_device *csdev)
 	 * sink is already enabled no memory is needed and the HW need not be
 	 * touched, even if the buffer size has changed.
 	 */
-	if (drvdata->mode == CS_MODE_SYSFS)
-		goto out;
+	if (drvdata->mode == CS_MODE_SYSFS) {
+		atomic_inc(csdev->refcnt);
+		goto unlock_out;
+	}
 
 	/*
 	 * If we don't have a buffer or it doesn't match the requested size,
@@ -1435,16 +1414,39 @@ static int tmc_enable_etr_sink_sysfs(struct coresight_device *csdev)
 		drvdata->sysfs_buf = new_buf;
 	}
 
-	drvdata->mode = CS_MODE_SYSFS;
-
 	if (drvdata->out_mode == TMC_ETR_OUT_MODE_MEM ||
 	    (drvdata->out_mode == TMC_ETR_OUT_MODE_USB
 	     && drvdata->byte_cntr->sw_usb))
 		tmc_etr_enable_hw(drvdata, drvdata->sysfs_buf);
+
+	drvdata->mode = CS_MODE_SYSFS;
 	drvdata->enable = true;
-out:
+
+	spin_unlock_irqrestore(&drvdata->spinlock, flags);
+	if (drvdata->out_mode == TMC_ETR_OUT_MODE_USB) {
+		if (drvdata->byte_cntr->sw_usb)
+			drvdata->usbch = usb_qdss_open("qdss_mdm",
+					drvdata->byte_cntr,
+					usb_bypass_notifier);
+		else
+			drvdata->usbch = usb_qdss_open("qdss", drvdata,
+						usb_notifier);
+
+		if (IS_ERR_OR_NULL(drvdata->usbch)) {
+			dev_err(&csdev->dev, "usb_qdss_open failed\n");
+			drvdata->enable = false;
+			drvdata->mode = CS_MODE_DISABLED;
+			ret = -ENODEV;
+		}
+	}
+
+	atomic_inc(csdev->refcnt);
+	goto out;
+
+unlock_out:
 	spin_unlock_irqrestore(&drvdata->spinlock, flags);
 
+out:
 	/* Free memory outside the spinlock if need be */
 	if (free_buf)
 		tmc_etr_free_sysfs_buf(free_buf);
