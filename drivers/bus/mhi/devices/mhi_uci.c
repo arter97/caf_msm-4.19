@@ -717,6 +717,7 @@ static const struct mhi_device_id mhi_uci_match_table[] = {
 	{ .chan = "QAIC_DIAG", .driver_data = 0x1000 },
 	{ .chan = "QAIC_SAHARA", .driver_data = 0x8000 },
 	{ .chan = "QAIC_QDSS", .driver_data = 0x1000 },
+	{ .chan = "QAIC_TIMESYNC", .driver_data = 0x1000 },
 	{},
 };
 
