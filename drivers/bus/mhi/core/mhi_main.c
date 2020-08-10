@@ -441,7 +441,7 @@ int mhi_queue_skb(struct mhi_device *mhi_dev,
 	int ret;
 
 	if (mhi_is_ring_full(mhi_cntrl, tre_ring))
-		return -ENOMEM;
+		return -EBUSY;
 
 	read_lock_bh(&mhi_cntrl->pm_lock);
 	if (unlikely(MHI_PM_IN_ERROR_STATE(mhi_cntrl->pm_state))) {
@@ -668,7 +668,7 @@ int mhi_queue_buf(struct mhi_device *mhi_dev,
 
 	tre_ring = &mhi_chan->tre_ring;
 	if (mhi_is_ring_full(mhi_cntrl, tre_ring))
-		return -ENOMEM;
+		return -EBUSY;
 
 	ret = mhi_chan->gen_tre(mhi_cntrl, mhi_chan, buf, buf, len, mflags);
 	if (unlikely(ret))
