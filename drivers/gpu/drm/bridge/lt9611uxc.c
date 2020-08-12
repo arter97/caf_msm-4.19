@@ -1625,12 +1625,73 @@ static ssize_t firmware_upgrade_show(struct device *dev,
 	return snprintf(buf, 4, "%d\n", pdata->fw_status);
 }
 
+static void connector_ctrl_handle(struct lt9611 *pdata, enum drm_connector_status connector_status)
+{
+	char name[32], status[32];
+	char *envp[5];
+	char *event_string = "HOTPLUG=1";
+	enum drm_connector_status last_status;
+	struct drm_device *dev = NULL;
+
+	dev = pdata->connector.dev;
+	last_status = pdata->connector.status;
+	pdata->connector.status = connector_status;
+	if (last_status == pdata->connector.status) {
+		return;
+	}
+
+	scnprintf(name, 32, "name=%s", pdata->connector.name);
+	scnprintf(status, 32, "status=%s", drm_get_connector_status_name(pdata->connector.status));
+
+	pr_debug("[%s]:[%s]\n", name, status);
+
+	envp[0] = name;
+	envp[1] = status;
+	envp[2] = event_string;
+	envp[3] = NULL;
+	envp[4] = NULL;
+
+	kobject_uevent_env(&dev->primary->kdev->kobj, KOBJ_CHANGE, envp);
+}
+
+static ssize_t connector_ctrl_store(struct device *dev,
+		struct device_attribute *attr,
+		const char *buf,
+		size_t count)
+{
+	struct lt9611 *pdata = dev_get_drvdata(dev);
+	int value, ret = 0;
+
+	if (!pdata) {
+		pr_err("pdata is NULL\n");
+		return -EINVAL;
+	}
+
+	ret = kstrtoint(buf, 10, &value);
+	if (ret) {
+		pr_err("Invalid argument\n");
+		return ret;
+	}
+
+	if (value) {
+		pdata->hpd_support = false;
+		connector_ctrl_handle(pdata, connector_status_connected);
+	} else {
+		pdata->hpd_support = true;
+		connector_ctrl_handle(pdata, connector_status_disconnected);
+	}
+
+	return count;
+}
+
 static DEVICE_ATTR_WO(dump_info);
 static DEVICE_ATTR_RW(firmware_upgrade);
+static DEVICE_ATTR_WO(connector_ctrl);
 
 static struct attribute *lt9611_sysfs_attrs[] = {
 	&dev_attr_dump_info.attr,
 	&dev_attr_firmware_upgrade.attr,
+	&dev_attr_connector_ctrl.attr,
 	NULL,
 };
 
