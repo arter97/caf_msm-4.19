@@ -621,6 +621,7 @@ static void mhi_pm_disable_transition(struct mhi_controller *mhi_cntrl,
 
 	/* trigger MHI RESET so device will not access host ddr */
 	if (MHI_REG_ACCESS_VALID(prev_state)) {
+		u32 ready = 0;
 		unsigned long timeout = msecs_to_jiffies(mhi_cntrl->timeout_ms);
 
 		MHI_CNTRL_LOG("Trigger device into MHI_RESET\n");
@@ -647,6 +648,20 @@ static void mhi_pm_disable_transition(struct mhi_controller *mhi_cntrl,
 				BHI_INTVEC, 0);
 
 		mhi_cntrl->initiate_mhi_reset = false;
+
+		/* wait for ready to be set */
+		ret = wait_event_timeout(mhi_cntrl->state_event,
+					 mhi_read_reg_field(mhi_cntrl,
+						mhi_cntrl->regs, MHISTATUS,
+						MHISTATUS_READY_MASK,
+						MHISTATUS_READY_SHIFT, &ready)
+					 || ready, timeout);
+		if ((!ret || !ready) && cur_state == MHI_PM_SYS_ERR_PROCESS) {
+			dev_err(mhi_cntrl->dev,
+				"Device failed to enter READY state\n");
+			mutex_unlock(&mhi_cntrl->pm_mutex);
+			return;
+		}
 	}
 
 	MHI_CNTRL_LOG(
