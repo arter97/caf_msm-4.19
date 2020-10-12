@@ -872,7 +872,8 @@ void mhi_create_devices(struct mhi_controller *mhi_cntrl)
 	 * devices, because client may try to capture time during
 	 * clint probe.
 	 */
-	mhi_create_time_sync_dev(mhi_cntrl);
+	if (mhi_cntrl->time_sync)
+		mhi_create_time_sync_dev(mhi_cntrl);
 
 	mhi_chan = mhi_cntrl->mhi_chan;
 	for (i = 0; i < mhi_cntrl->max_chan; i++, mhi_chan++) {
