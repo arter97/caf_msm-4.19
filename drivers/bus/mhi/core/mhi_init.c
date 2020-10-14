@@ -1434,6 +1434,7 @@ static int parse_ch_cfg(struct mhi_controller *mhi_cntrl,
 	struct mhi_channel_config *ch_cfg;
 
 	mhi_cntrl->max_chan = config->max_channels;
+	mhi_cntrl->time_sync = config->time_sync;
 
 	mhi_cntrl->mhi_chan = kcalloc(mhi_cntrl->max_chan,
 				      sizeof(*mhi_cntrl->mhi_chan), GFP_KERNEL);
