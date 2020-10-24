@@ -986,16 +986,9 @@ static int icnss_qdss_trace_save_hdlr(struct icnss_priv *priv,
 static int icnss_event_soc_wake_request(struct icnss_priv *priv, void *data)
 {
 	int ret = 0;
-	int count = 0;
 
 	if (!priv)
 		return -ENODEV;
-
-	if (atomic_read(&priv->soc_wake_ref_count)) {
-		count = atomic_inc_return(&priv->soc_wake_ref_count);
-		icnss_pr_dbg("SOC already awake, Ref count: %d", count);
-		return 0;
-	}
 
 	ret = wlfw_send_soc_wake_msg(priv, QMI_WLFW_WAKE_REQUEST_V01);
 	if (!ret)
@@ -2309,6 +2302,7 @@ EXPORT_SYMBOL(icnss_set_fw_log_mode);
 int icnss_force_wake_request(struct device *dev)
 {
 	struct icnss_priv *priv = dev_get_drvdata(dev);
+	int count = 0;
 
 	if (!dev)
 		return -ENODEV;
@@ -2316,6 +2310,12 @@ int icnss_force_wake_request(struct device *dev)
 	if (!priv) {
 		icnss_pr_err("Platform driver not initialized\n");
 		return -EINVAL;
+	}
+
+	if (atomic_read(&priv->soc_wake_ref_count)) {
+		count = atomic_inc_return(&priv->soc_wake_ref_count);
+		icnss_pr_dbg("SOC already awake, Ref count: %d", count);
+		return 0;
 	}
 
 	icnss_pr_dbg("Calling SOC Wake request");
@@ -2330,6 +2330,7 @@ EXPORT_SYMBOL(icnss_force_wake_request);
 int icnss_force_wake_release(struct device *dev)
 {
 	struct icnss_priv *priv = dev_get_drvdata(dev);
+	int count = 0;
 
 	if (!dev)
 		return -ENODEV;
@@ -2337,6 +2338,13 @@ int icnss_force_wake_release(struct device *dev)
 	if (!priv) {
 		icnss_pr_err("Platform driver not initialized\n");
 		return -EINVAL;
+	}
+
+	if (atomic_read(&priv->soc_wake_ref_count) > 1) {
+		count = atomic_dec_return(&priv->soc_wake_ref_count);
+		icnss_pr_dbg("SOC previous release pending, Ref count: %d",
+			     count);
+		return 0;
 	}
 
 	icnss_pr_dbg("Calling SOC Wake response");
@@ -2672,7 +2680,6 @@ EXPORT_SYMBOL(icnss_idle_restart);
 int icnss_exit_power_save(struct device *dev)
 {
 	struct icnss_priv *priv = dev_get_drvdata(dev);
-	int ret = 0;
 
 	icnss_pr_dbg("Calling Exit Power Save\n");
 
@@ -2680,12 +2687,8 @@ int icnss_exit_power_save(struct device *dev)
 	    !test_bit(ICNSS_MODE_ON, &priv->state))
 		return 0;
 
-	ret = wlfw_exit_power_save_send_msg(priv);
-	if (ret) {
-		priv->stats.pm_resume_err++;
-		return ret;
-	}
-	return 0;
+	return wlfw_power_save_send_msg(priv,
+			(enum wlfw_power_save_mode_v01)ICNSS_POWER_SAVE_EXIT);
 }
 EXPORT_SYMBOL(icnss_exit_power_save);
 
@@ -3271,12 +3274,18 @@ static int icnss_pm_suspend(struct device *dev)
 
 	if (!priv->ops || !priv->ops->pm_suspend ||
 	    !test_bit(ICNSS_DRIVER_PROBED, &priv->state))
-		goto out;
+		return 0;
 
 	ret = priv->ops->pm_suspend(dev);
 
-out:
 	if (ret == 0) {
+		if (priv->device_id == WCN6750_DEVICE_ID) {
+			ret = wlfw_power_save_send_msg(priv,
+				(enum wlfw_power_save_mode_v01)
+				ICNSS_POWER_SAVE_ENTER);
+			if (ret)
+				return priv->ops->pm_resume(dev);
+		}
 		priv->stats.pm_suspend++;
 		set_bit(ICNSS_PM_SUSPEND, &priv->state);
 	} else {
@@ -3388,7 +3397,13 @@ static int icnss_pm_runtime_suspend(struct device *dev)
 
 	icnss_pr_vdbg("Runtime suspend\n");
 	ret = priv->ops->runtime_suspend(dev);
-
+	if (!ret) {
+		ret = wlfw_power_save_send_msg(priv,
+				(enum wlfw_power_save_mode_v01)
+				ICNSS_POWER_SAVE_ENTER);
+		if (ret)
+			return priv->ops->runtime_resume(dev);
+	}
 out:
 	return ret;
 }
