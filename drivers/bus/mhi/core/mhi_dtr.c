@@ -131,7 +131,7 @@ static int mhi_dtr_queue_inbound(struct mhi_controller *mhi_cntrl)
 	int nr_trbs = mhi_get_no_free_descriptors(mhi_dev, DMA_FROM_DEVICE);
 	size_t mtu = mhi_dev->mtu;
 	void *buf;
-	int ret = -EIO, i;
+	int ret = 0, i;
 
 	for (i = 0; i < nr_trbs; i++) {
 		buf = kmalloc(mtu, GFP_KERNEL);
