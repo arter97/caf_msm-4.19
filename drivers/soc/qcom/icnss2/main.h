@@ -23,6 +23,9 @@
 #define ADRASTEA_DEVICE_ID 0xabcd
 #define QMI_WLFW_MAX_NUM_MEM_SEG 32
 #define THERMAL_NAME_LENGTH 20
+#define ICNSS_SMEM_VALUE_MASK 0xFFFFFFFF
+#define ICNSS_SMEM_SEQ_NO_POS 16
+
 extern uint64_t dynamic_feature_mask;
 
 enum icnss_bdf_type {
@@ -110,6 +113,7 @@ enum icnss_driver_state {
 	ICNSS_BLOCK_SHUTDOWN,
 	ICNSS_PDR,
 	ICNSS_DEL_SERVER,
+	ICNSS_COLD_BOOT_CAL,
 };
 
 struct ce_irq_list {
@@ -168,6 +172,10 @@ struct icnss_fw_mem {
 	unsigned long attrs;
 };
 
+enum icnss_power_save_mode {
+	ICNSS_POWER_SAVE_ENTER = 1,
+	ICNSS_POWER_SAVE_EXIT,
+};
 struct icnss_stats {
 	struct {
 		uint32_t posted;
@@ -240,6 +248,9 @@ struct icnss_stats {
 	u32 exit_power_save_req;
 	u32 exit_power_save_resp;
 	u32 exit_power_save_err;
+	u32 enter_power_save_req;
+	u32 enter_power_save_resp;
+	u32 enter_power_save_err;
 	u32 soc_wake_req;
 	u32 soc_wake_resp;
 	u32 soc_wake_err;
@@ -301,6 +312,12 @@ struct icnss_thermal_cdev {
 	unsigned long max_thermal_state;
 	struct device_node *dev_node;
 	struct thermal_cooling_device *tcdev;
+};
+
+struct smp2p_out_info {
+	unsigned short seq;
+	unsigned int smem_bit;
+	struct qcom_smem_state *smem_state;
 };
 
 struct icnss_priv {
@@ -379,6 +396,7 @@ struct icnss_priv {
 	struct mutex dev_lock;
 	uint32_t fw_error_fatal_irq;
 	uint32_t fw_early_crash_irq;
+	struct smp2p_out_info smp2p_info;
 	struct completion unblock_shutdown;
 	struct adc_tm_param vph_monitor_params;
 	struct adc_tm_chip *adc_tm_dev;
