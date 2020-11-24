@@ -66,15 +66,15 @@ static unsigned char node_id[ETH_ALEN] = {0x02, 0x50, 0xf4, 0x00, 0x00, 0x00};
 static const unsigned char default_modem_addr[ETH_ALEN] = {0x02, 0x50, 0xf3, 0x00, 0x00, 0x00};
 
 #if defined(CONFIG_BRIDGE) || defined(CONFIG_BRIDGE_MODULE)
-//#define QCOM_BRIDGE_MODE
+#define QCOM_BRIDGE_MODE
 #endif
 
 #define QCOM_RMNET_MODE
-#define PCIE_MHI_DRIVER_VERSION "V1.3.0.10"
+#define PCIE_MHI_DRIVER_VERSION "V1.3.0.13"
 #define RANDOM_BYTES_LEN  3
 
 #ifdef QCOM_BRIDGE_MODE
-static uint __read_mostly bridge_mode = BIT(0)/*|BIT(1)*/;
+static uint __read_mostly bridge_mode = 0 /*|BIT(1)*/;
 module_param( bridge_mode, uint, S_IRUGO );
 #endif
 
@@ -333,10 +333,10 @@ static void mhi_netdev_create_debugfs(struct mhi_netdev *mhi_netdev);
 
 #ifdef QCOM_BRIDGE_MODE
 static const struct net_device_ops mhi_netdev_ops_ip;
-static const struct net_device_ops qmap_netdev_ops;
+static const struct net_device_ops rmnet_vnd_ops;
 
 static int is_qmap_netdev(const struct net_device *ndev) {
-	return ndev->netdev_ops == &qmap_netdev_ops;
+	return ndev->netdev_ops == &rmnet_vnd_ops;
 }
 
 static int bridge_arp_reply(struct net_device *net, struct sk_buff *skb, uint bridge_ipv4) {
@@ -420,7 +420,7 @@ static void bridge_mode_rx_fixup(struct mhi_netdev *mhi_netdev, struct net_devic
 	uint bridge_mode = 0;
 	unsigned char *bridge_mac;
 
-	if (mhi_netdev->qmap_mode > 1) {
+	if (mhi_netdev->qmap_mode > 0) {
 		struct qmap_priv *priv = netdev_priv(net);
 		bridge_mode = priv->bridge_mode;
 		bridge_mac = priv->bridge_mac;
@@ -449,6 +449,26 @@ static ssize_t bridge_mode_show(struct device *dev, struct device_attribute *att
 
 	return snprintf(buf, PAGE_SIZE, "%u\n", bridge_mode);
 }
+
+static ssize_t bridge_mode_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t count) {
+	struct net_device *ndev = to_net_dev(dev);
+
+#ifdef CONFIG_QCA_NSS_DRV
+	if (qca_nss_enabled)
+		return count;
+#endif
+	if (is_qmap_netdev(ndev)) {
+		struct qmap_priv *priv = netdev_priv(ndev);
+		priv->bridge_mode = simple_strtoul(buf, NULL, 0);
+	}
+	else {
+		struct mhi_netdev *mhi_netdev = ndev_to_mhi(ndev);
+		mhi_netdev->bridge_mode = simple_strtoul(buf, NULL, 0);
+	}
+
+	return count;
+}
+
 
 static ssize_t bridge_ipv4_show(struct device *dev, struct device_attribute *attr, char *buf) {
 	struct net_device *ndev = to_net_dev(dev);
@@ -487,8 +507,20 @@ static ssize_t bridge_ipv4_store(struct device *dev, struct device_attribute *at
 	return count;
 }
 
-static DEVICE_ATTR(bridge_mode,  S_IRUGO, bridge_mode_show, NULL);
+static DEVICE_ATTR(bridge_mode, S_IWUSR | S_IRUGO, bridge_mode_show, bridge_mode_store);
 static DEVICE_ATTR(bridge_ipv4, S_IWUSR | S_IRUGO, bridge_ipv4_show, bridge_ipv4_store);
+
+#ifndef MHI_NETDEV_ONE_CARD_MODE
+static struct attribute *pcie_mhi_qmap_sysfs_attrs[] = {
+	&dev_attr_bridge_mode.attr,
+	&dev_attr_bridge_ipv4.attr,
+	NULL,
+};
+
+static struct attribute_group pcie_mhi_qmap_sysfs_attr_group = {
+	.attrs = pcie_mhi_qmap_sysfs_attrs,
+};
+#endif
 #endif
 
 static struct sk_buff * add_mbim_hdr(struct sk_buff *skb, u8 mux_id) {
@@ -499,7 +531,7 @@ static struct sk_buff * add_mbim_hdr(struct sk_buff *skb, u8 mux_id) {
 	unsigned int skb_len = skb->len;
 
 	if (skb_headroom(skb) < sizeof(struct mhi_mbim_hdr)) {
-		printk("skb_headroom small!\n");
+		printk("skb_headroom small! headroom is %u, need %zd\n", skb_headroom(skb), sizeof(struct mhi_mbim_hdr));
 		return NULL;
 	}
 
@@ -600,6 +632,7 @@ static struct sk_buff * add_qhdr_v5(struct sk_buff *skb, u8 mux_id) {
 	return skb;
 }
 
+#ifndef MHI_NETDEV_ONE_CARD_MODE
 static void rmnet_vnd_upate_rx_stats(struct net_device *net,
 			unsigned rx_packets, unsigned rx_bytes) {
 #if defined(MHI_NETDEV_STATUS64)
@@ -860,6 +893,7 @@ static rx_handler_result_t rmnet_vnd_rx_handler(struct sk_buff **pskb)
 
 	return RX_HANDLER_PASS;
 }
+#endif
 
 static void rmnet_mbim_rx_handler(void *dev, struct sk_buff *skb_in)
 {
@@ -1006,7 +1040,9 @@ static void rmnet_mbim_rx_handler(void *dev, struct sk_buff *skb_in)
 				__skb_pull(qmap_skb, ETH_HLEN);
 			}
 
+#ifndef MHI_NETDEV_ONE_CARD_MODE
 			rmnet_vnd_upate_rx_stats(qmap_net, 1, skb_len);
+#endif
 			__skb_queue_tail(&skb_chain, qmap_skb);
 		}
 
@@ -1136,7 +1172,9 @@ static void rmnet_qmi_rx_handler(void *dev, struct sk_buff *skb_in)
 			__skb_pull(qmap_skb, ETH_HLEN);
 		}
 
+#ifndef MHI_NETDEV_ONE_CARD_MODE
 		rmnet_vnd_upate_rx_stats(qmap_net, 1, skb_len);
+#endif
 		__skb_queue_tail(&skb_chain, qmap_skb);
 
 skip_pkt:
@@ -1149,7 +1187,7 @@ error_pkt:
 	}
 }
 
-
+#ifndef MHI_NETDEV_ONE_CARD_MODE
 static rx_handler_result_t rmnet_rx_handler(struct sk_buff **pskb)
 {
 	struct sk_buff *skb = *pskb;
@@ -1167,8 +1205,7 @@ static rx_handler_result_t rmnet_rx_handler(struct sk_buff **pskb)
 		WARN_ON(1);
 		return RX_HANDLER_PASS;
 	}
-
-	dev = rcu_dereference(skb->dev->rx_handler_data);
+	dev = (void *)ndev_to_mhi(skb->dev);
 
 	if (dev == NULL) {
 		WARN_ON(1);
@@ -1179,17 +1216,16 @@ static rx_handler_result_t rmnet_rx_handler(struct sk_buff **pskb)
 		rmnet_mbim_rx_handler(dev, skb);
 	else
 		rmnet_qmi_rx_handler(dev, skb);
-#ifdef FOR_DEBUG
 	if (!skb_cloned(skb)) {
 		struct mhi_netdev *mhi_netdev = (struct mhi_netdev *)dev;
 		if (skb_queue_len(&mhi_netdev->rx_allocated) < 128) {
-			skb->data = skb->tail = skb->head;
+			skb->data = skb->head;
+			skb_reset_tail_pointer(skb);
 			skb->len = 0;
 			skb_queue_tail(&mhi_netdev->rx_allocated, skb);
 			return RX_HANDLER_CONSUMED;
 		}
 	}
-#endif
 
 	consume_skb(skb);
 
@@ -1204,6 +1240,7 @@ static struct net_device * rmnet_vnd_register_device(struct mhi_netdev *pQmapDev
 	struct qmap_priv *priv;
 	int err;
 	struct rmnet_nss_cb *nss_cb;
+	int rawip_for_nss = 1;
 
 	qmap_net = alloc_etherdev(sizeof(*priv));
 	if (!qmap_net)
@@ -1225,6 +1262,13 @@ static struct net_device * rmnet_vnd_register_device(struct mhi_netdev *pQmapDev
 		goto out_free_newdev;
 #endif
 
+#ifdef QCOM_BRIDGE_MODE
+	priv->bridge_mode = !!(pQmapDev->bridge_mode & BIT(offset_id));
+	qmap_net->sysfs_groups[0] = &pcie_mhi_qmap_sysfs_attr_group;
+	if (priv->bridge_mode)
+		rawip_for_nss = 0;
+#endif
+
 	priv->agg_skb = NULL;
 	priv->agg_count = 0;
 	hrtimer_init(&priv->agg_hrtimer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
@@ -1239,8 +1283,11 @@ static struct net_device * rmnet_vnd_register_device(struct mhi_netdev *pQmapDev
 	qmap_net->flags &= ~(IFF_BROADCAST | IFF_MULTICAST);
 
 	nss_cb = rcu_dereference(rmnet_nss_callbacks);
-	if (nss_cb) {
+	if (nss_cb && rawip_for_nss) {
 		rmnet_vnd_rawip_setup(qmap_net);
+	}
+	else if (mhi_mbim_enabled) {
+		qmap_net->needed_headroom = sizeof(struct mhi_mbim_hdr);
 	}
 
 	err = register_netdev(qmap_net);
@@ -1252,7 +1299,7 @@ static struct net_device * rmnet_vnd_register_device(struct mhi_netdev *pQmapDev
 	netif_carrier_off(qmap_net);
 
 	nss_cb = rcu_dereference(rmnet_nss_callbacks);
-	if (nss_cb) {
+	if (nss_cb && rawip_for_nss) {
 		int rc = nss_cb->nss_create(qmap_net);
 		WARN_ON(rc);
 		if (rc) {
@@ -1278,6 +1325,7 @@ static void  rmnet_vnd_unregister_device(struct net_device *qmap_net) {
 	struct rmnet_nss_cb *nss_cb;
 	struct qmap_priv *priv;
 	unsigned long flags;
+	int rawip_for_nss = 1;
 
 	pr_info("%s(%s)\n", __func__, qmap_net->name);
 	netif_carrier_off(qmap_net);
@@ -1294,13 +1342,16 @@ static void  rmnet_vnd_unregister_device(struct net_device *qmap_net) {
 	}
 	spin_unlock_irqrestore(&priv->agg_lock, flags);
 
-	rtnl_lock();
-	if (netdev_is_rx_handler_busy(qmap_net))
-		netdev_rx_handler_unregister(qmap_net);
-	rtnl_unlock();
-
+#ifdef QCOM_BRIDGE_MODE
+	if (priv->bridge_mode)
+		rawip_for_nss = 0;
+#endif
 	nss_cb = rcu_dereference(rmnet_nss_callbacks);
-	if (nss_cb) {
+	if (nss_cb && rawip_for_nss) {
+		rtnl_lock();
+		if (netdev_is_rx_handler_busy(qmap_net))
+			netdev_rx_handler_unregister(qmap_net);
+		rtnl_unlock();
 		nss_cb->nss_free(qmap_net);
 	}
 
@@ -1310,6 +1361,7 @@ static void  rmnet_vnd_unregister_device(struct net_device *qmap_net) {
 	unregister_netdev (qmap_net);
 	free_netdev(qmap_net);
 }
+#endif
 
 static void rmnet_info_set(struct mhi_netdev *pQmapDev, RMNET_INFO *rmnet_info)
 {
@@ -1319,7 +1371,7 @@ static void rmnet_info_set(struct mhi_netdev *pQmapDev, RMNET_INFO *rmnet_info)
 	rmnet_info->iface_id = 4;
 	rmnet_info->qmap_mode = pQmapDev->qmap_mode;
 	rmnet_info->qmap_version = pQmapDev->qmap_version;
-	rmnet_info->dl_minimum_padding = 16;
+	rmnet_info->dl_minimum_padding = 0;
 }
 
 static ssize_t qmap_mode_show(struct device *dev, struct device_attribute *attr, char *buf) {
@@ -1378,7 +1430,7 @@ static ssize_t link_state_store(struct device *dev, struct device_attribute *att
 		}
 
 		if (qmap_net) {
-			if (mhi_netdev->link_state && (1 << offset_id))
+			if (mhi_netdev->link_state & (1 << offset_id))
 				netif_carrier_on(qmap_net);
 			else
 				netif_carrier_off(qmap_net);
@@ -1553,10 +1605,32 @@ static int mhi_netdev_poll(struct napi_struct *napi, int budget)
 	}
 
 	while ((skb = skb_dequeue (&mhi_netdev->qmap_chain))) {
+#ifdef MHI_NETDEV_ONE_CARD_MODE
+		int recly_skb = 0;
+
+		mhi_netdev_upate_rx_stats(mhi_netdev, 1, skb->len);
+		if (mhi_mbim_enabled)
+			rmnet_mbim_rx_handler(mhi_netdev, skb);
+		else
+			rmnet_qmi_rx_handler(mhi_netdev, skb);
+
+		if (!skb_cloned(skb)) {
+			if (skb_queue_len(&mhi_netdev->rx_allocated) < 128) {
+				skb->data = skb->head;
+				skb_reset_tail_pointer(skb);
+				skb->len = 0;
+				skb_queue_tail(&mhi_netdev->rx_allocated, skb);
+				recly_skb = 1;
+			}
+		}
+		if (recly_skb == 0)
+			dev_kfree_skb(skb);
+#else
 		mhi_netdev_upate_rx_stats(mhi_netdev, 1, skb->len);
 		skb->dev = mhi_netdev->ndev;
 		skb->protocol = htons(ETH_P_MAP);
 		netif_receive_skb(skb);
+#endif
 	}
 
 	/* queue new buffers */
@@ -1624,10 +1698,47 @@ static int mhi_netdev_xmit(struct sk_buff *skb, struct net_device *dev)
 	//printk("%s skb=%p, len=%d, protocol=%x, hdr_len=%d\n", __func__, skb, skb->len, skb->protocol, skb->hdr_len);
 	//qmap_hex_dump(__func__, skb->data, 32);
 
+#ifdef MHI_NETDEV_ONE_CARD_MODE
+	if (dev->type == ARPHRD_ETHER) {
+		skb_reset_mac_header(skb);
+
+#ifdef QCOM_BRIDGE_MODE
+		if (mhi_netdev->bridge_mode && bridge_mode_tx_fixup(dev, skb, mhi_netdev->bridge_ipv4, mhi_netdev->bridge_mac) == NULL) {
+		      dev_kfree_skb_any (skb);
+		      return NETDEV_TX_OK;
+		}
+#endif
+
+		if (skb_pull(skb, ETH_HLEN) == NULL) {
+			dev_kfree_skb_any (skb);
+			return NETDEV_TX_OK;
+		}
+	}
+
+	if (mhi_mbim_enabled) {
+		if (add_mbim_hdr(skb, QCOM_QMAP_MUX_ID) == NULL) {
+			dev_kfree_skb_any (skb);
+			return NETDEV_TX_OK;
+		}
+	}
+	else {
+		if (mhi_netdev->qmap_version == 5) {
+			add_qhdr(skb, QCOM_QMAP_MUX_ID);
+		}
+		else if (mhi_netdev->qmap_version == 9) {
+			add_qhdr_v5(skb, QCOM_QMAP_MUX_ID);
+		}
+		else {
+			dev_kfree_skb_any (skb);
+			return NETDEV_TX_OK;
+		}
+	}
+#else
 	if (skb->protocol != htons(ETH_P_MAP)) {
 		dev_kfree_skb_any(skb);
 		return NETDEV_TX_OK;
 	}
+#endif
 
 	if (mhi_mbim_enabled) {
 		struct mhi_mbim_hdr *mhdr = (struct mhi_mbim_hdr *)skb->data;
@@ -1790,6 +1901,12 @@ static void mhi_netdev_setup(struct net_device *dev)
 	dev->flags &= ~(IFF_BROADCAST | IFF_MULTICAST); //POINTOPOINT will make SFE work wrong
 	dev->watchdog_timeo = WATCHDOG_TIMEOUT;
 	dev->features |= (NETIF_F_VLAN_CHALLENGED);
+
+#ifdef MHI_NETDEV_ONE_CARD_MODE
+	if (mhi_mbim_enabled) {
+		dev->needed_headroom = sizeof(struct mhi_mbim_hdr);
+	}
+#endif
 }
 
 /* enable mhi_netdev netdev, call only after grabbing mhi_netdev.mutex */
@@ -2160,6 +2277,7 @@ static void mhi_netdev_remove(struct mhi_device *mhi_dev)
 	write_unlock_irq(&mhi_netdev->pm_lock);
 
 	if (mhi_netdev->use_rmnet_usb) {
+#ifndef MHI_NETDEV_ONE_CARD_MODE
 		unsigned i;
 
 		for (i = 0; i < mhi_netdev->qmap_mode; i++) {
@@ -2173,6 +2291,7 @@ static void mhi_netdev_remove(struct mhi_device *mhi_dev)
 		if (netdev_is_rx_handler_busy(mhi_netdev->ndev))
 			netdev_rx_handler_unregister(mhi_netdev->ndev);
 		rtnl_unlock();
+#endif
 	}
 
 	while ((skb = skb_dequeue (&mhi_netdev->skb_chain)))
@@ -2268,6 +2387,11 @@ static int mhi_netdev_probe(struct mhi_device *mhi_dev,
 	mhi_netdev_create_debugfs(mhi_netdev);
 
 	if (mhi_netdev->use_rmnet_usb) {
+#ifdef MHI_NETDEV_ONE_CARD_MODE
+		mhi_netdev->mpQmapNetDev[0] = mhi_netdev->ndev;
+		strcpy(mhi_netdev->rmnet_info.ifname[0], mhi_netdev->mpQmapNetDev[0]->name);
+		mhi_netdev->rmnet_info.mux_id[0] = QCOM_QMAP_MUX_ID;
+#else
 		unsigned i;
 
 		for (i = 0; i < mhi_netdev->qmap_mode; i++) {
@@ -2280,8 +2404,9 @@ static int mhi_netdev_probe(struct mhi_device *mhi_dev,
 		}
 
 		rtnl_lock();
-		netdev_rx_handler_register(mhi_netdev->ndev, rmnet_rx_handler, mhi_netdev);
+		netdev_rx_handler_register(mhi_netdev->ndev, rmnet_rx_handler, NULL);
 		rtnl_unlock();
+#endif
 	}
 
 	return 0;
