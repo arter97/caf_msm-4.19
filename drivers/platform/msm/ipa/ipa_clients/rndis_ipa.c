@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2013-2019, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2013-2020, The Linux Foundation. All rights reserved.
  */
 
 #include <linux/atomic.h>
@@ -1120,6 +1120,12 @@ static void rndis_ipa_packet_receive_notify(
 		("packet Rx, len=%d\n",
 		skb->len);
 
+	if (unlikely(rndis_ipa_ctx == NULL)) {
+		RNDIS_IPA_DEBUG("Private context is NULL. Drop SKB.\n");
+		dev_kfree_skb_any(skb);
+		return;
+	}
+
 	if (unlikely(rndis_ipa_ctx->rx_dump_enable))
 		rndis_ipa_dump_skb(skb);
 
@@ -1127,11 +1133,15 @@ static void rndis_ipa_packet_receive_notify(
 		RNDIS_IPA_DEBUG("use connect()/up() before receive()\n");
 		RNDIS_IPA_DEBUG("packet dropped (length=%d)\n",
 				skb->len);
+		rndis_ipa_ctx->rx_dropped++;
+		dev_kfree_skb_any(skb);
 		return;
 	}
 
 	if (unlikely(evt != IPA_RECEIVE)) {
 		RNDIS_IPA_ERROR("a none IPA_RECEIVE event in driver RX\n");
+		rndis_ipa_ctx->rx_dropped++;
+		dev_kfree_skb_any(skb);
 		return;
 	}
 
@@ -1377,8 +1387,9 @@ void rndis_ipa_cleanup(void *private)
 	rndis_ipa_debugfs_destroy(rndis_ipa_ctx);
 	RNDIS_IPA_DEBUG("debugfs remove was done\n");
 
+	RNDIS_IPA_DEBUG("RNDIS_IPA netdev unregister started\n");
 	unregister_netdev(rndis_ipa_ctx->net);
-	RNDIS_IPA_DEBUG("netdev unregistered\n");
+	RNDIS_IPA_DEBUG("RNDIS_IPA netdev unregister completed\n");
 
 	spin_lock_irqsave(&rndis_ipa_ctx->state_lock, flags);
 	next_state = rndis_ipa_next_state(rndis_ipa_ctx->state,
