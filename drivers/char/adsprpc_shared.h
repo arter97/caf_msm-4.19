@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0 */
 /*
- * Copyright (c) 2012-2019, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2012-2020, The Linux Foundation. All rights reserved.
  */
 #ifndef ADSPRPC_SHARED_H
 #define ADSPRPC_SHARED_H
@@ -348,4 +348,19 @@ static inline struct smq_phy_page *smq_phy_page_start(uint32_t sc,
 	return (struct smq_phy_page *)(&buf[nTotal]);
 }
 
+enum fastrpc_proc_attr {
+	/* Macro for Debug attr */
+	FASTRPC_MODE_DEBUG				= 1 << 0,
+	/* Macro for Ptrace */
+	FASTRPC_MODE_PTRACE				= 1 << 1,
+	/* Macro for CRC Check */
+	FASTRPC_MODE_CRC				= 1 << 2,
+	/* Macro for Unsigned PD */
+	FASTRPC_MODE_UNSIGNED_MODULE	= 1 << 3,
+	/* Macro for Adaptive QoS */
+	FASTRPC_MODE_ADAPTIVE_QOS		= 1 << 4,
+	/* Macro for System Process */
+	FASTRPC_MODE_SYSTEM_PROCESS		= 1 << 5,
+
+};
 #endif
