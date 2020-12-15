@@ -40,6 +40,7 @@ static struct gpio_map {
 	{"qcom,mdm-link-detect-gpio", MDM_LINK_DETECT},
 	{"qcom,m2-full-card-pwr-gpio", MDM2_CARD_PWR},
 	{"qcom,m2-rst-gpio", MDM2_RESET},
+	{"qcom,m2-w-disable1-gpio", MDM2_W_DISABLE1},
 };
 
 /* Required gpios */
@@ -1150,6 +1151,7 @@ err_destroy_wrkq:
 enum M2_CTRL_GPIO {
 	M2_FULL_CARD_PWR = 0,
 	M2_RST,
+	M2_W_DISABLE1,
 	M2_CTRL_MAX
 };
 struct m2_gpio_info{
@@ -1159,7 +1161,8 @@ struct m2_gpio_info{
 
 static struct m2_gpio_info gpio_info[M2_CTRL_MAX] = {
         {"qcom,m2-full-card-pwr-gpio", 0},
-        {"qcom,m2-rst-gpio", 0}
+        {"qcom,m2-rst-gpio", 0},
+        {"qcom,m2-w-disable1-gpio", 0}
 };
 
 #define M2_DEBUG_LOG(fmt, ...) pr_err("[D][%s] " fmt, __func__, ##__VA_ARGS__)
@@ -1202,9 +1205,17 @@ static int sdx55m_m2_setup_hw(struct mdm_ctrl *mdm,
 	}
 	gpio_info[M2_RST].num = ret;
 
-	M2_DEBUG_LOG("m2_setup_hw: M2_FULL_CARD_PWR = %d, M2_RST = %d.\n",
+	ret = of_get_named_gpio(node, gpio_info[M2_W_DISABLE1].name, 0);
+	if (ret < 0) {
+	            dev_err(&pdev->dev, "Failed to get M2_W_DISABLE1 gpio !\n");
+	}
+	gpio_info[M2_W_DISABLE1].num = ret;
+
+
+	M2_DEBUG_LOG("m2_setup_hw: M2_FULL_CARD_PWR = %d, M2_RST = %d, M2_W_DISABLE1 = %d\n",
 			gpio_info[M2_FULL_CARD_PWR].num,
-			gpio_info[M2_RST].num);
+			gpio_info[M2_RST].num,
+			gpio_info[M2_W_DISABLE1].num);
 
 	if (gpio_request(gpio_info[M2_FULL_CARD_PWR].num, gpio_info[M2_FULL_CARD_PWR].name)){
 		dev_err(&pdev->dev, "Failed to configure M2_FULL_CARD_PWR gpio!\n");
@@ -1219,6 +1230,13 @@ static int sdx55m_m2_setup_hw(struct mdm_ctrl *mdm,
 	}
 	else
 		gpio_direction_output(gpio_info[M2_RST].num, 1);
+
+	usleep_range(7000,7005);
+
+	if (gpio_request(gpio_info[M2_W_DISABLE1].num, gpio_info[M2_W_DISABLE1].name)){
+		dev_err(&pdev->dev, "Failed to configure M2_W_DISABLE1 gpio !\n");
+	} else
+		gpio_direction_output(gpio_info[M2_W_DISABLE1].num, 1);
 
 	M2_DEBUG_LOG("m2_setup_hw: exit!\n");
 

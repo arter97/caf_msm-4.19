@@ -58,6 +58,7 @@ enum mdm_gpio {
 	MDM_LINK_DETECT,
 	MDM2_RESET,
 	MDM2_CARD_PWR,
+	MDM2_W_DISABLE1,
 	NUM_GPIOS,
 };
 
