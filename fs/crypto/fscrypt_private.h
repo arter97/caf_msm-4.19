@@ -99,6 +99,8 @@ struct fscrypt_info {
 	u8 ci_nonce[FS_KEY_DERIVATION_NONCE_SIZE];
 	u8 ci_raw_key[FS_MAX_KEY_SIZE];
 	size_t key_size;
+	/* Hashed inode number for FS_POLICY_FLAG_IV_INO_LBLK_32 */
+	u32 ci_hashed_ino;
 };
 
 typedef enum {
