@@ -922,6 +922,21 @@ int cnss_pci_link_down(struct device *dev)
 }
 EXPORT_SYMBOL(cnss_pci_link_down);
 
+int cnss_pci_get_reg_dump(struct device *dev, uint8_t *buffer, uint32_t len)
+{
+	struct pci_dev *pci_dev = to_pci_dev(dev);
+
+	if (!pci_dev) {
+		cnss_pr_err("pci_dev is NULL\n");
+		return -EINVAL;
+	}
+
+	cnss_pr_dbg("Get pci reg dump for hang data\n");
+
+	return msm_pcie_reg_dump(pci_dev, buffer, len);
+}
+EXPORT_SYMBOL(cnss_pci_get_reg_dump);
+
 int cnss_pcie_is_device_down(struct cnss_pci_data *pci_priv)
 {
 	struct cnss_plat_data *plat_priv;
@@ -1237,6 +1252,10 @@ static void cnss_pci_set_wlaon_pwr_ctrl(struct cnss_pci_data *pci_priv,
 	u32 val;
 
 	if (!plat_priv->set_wlaon_pwr_ctrl)
+		return;
+
+	if (pci_priv->pci_link_state == PCI_LINK_DOWN ||
+	    pci_priv->pci_link_down_ind)
 		return;
 
 	if (do_force_wake)
@@ -4464,11 +4483,12 @@ static void cnss_dev_rddm_timeout_hdlr(struct timer_list *t)
 {
 	struct cnss_pci_data *pci_priv =
 		from_timer(pci_priv, t, dev_rddm_timer);
-	struct mhi_controller *mhi_ctrl = pci_priv->mhi_ctrl;
+	struct mhi_controller *mhi_ctrl;
 
 	if (!pci_priv)
 		return;
 
+	mhi_ctrl = pci_priv->mhi_ctrl;
 	cnss_fatal_err("Timeout waiting for RDDM notification\n");
 
 	if (mhi_get_exec_env(mhi_ctrl) == MHI_EE_PBL)
@@ -4546,6 +4566,7 @@ static void cnss_mhi_notify_status(struct mhi_controller *mhi_ctrl, void *priv,
 			cnss_pci_dump_bl_sram_mem(pci_priv);
 			cnss_pci_dump_mhi_reg(pci_priv);
 		}
+		cnss_reason = CNSS_REASON_TIMEOUT;
 		break;
 	default:
 		cnss_pr_err("Unsupported MHI status cb reason: %d\n", reason);

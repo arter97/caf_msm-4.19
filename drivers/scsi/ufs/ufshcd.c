@@ -801,20 +801,20 @@ static inline void ufshcd_cond_add_cmd_trace(struct ufs_hba *hba,
 	u8 opcode = 0;
 	u8 cmd_id = 0, idn = 0;
 	sector_t lba = 0;
+	struct scsi_cmnd *cmd = lrbp->cmd;
 	int transfer_len = 0;
 
-	if (lrbp->cmd) { /* data phase exists */
+	if (cmd) { /* data phase exists */
 		/* trace UPIU also */
 		ufshcd_add_cmd_upiu_trace(hba, tag, str);
-		opcode = (u8)(*lrbp->cmd->cmnd);
+		opcode = cmd->cmnd[0];
 		if ((opcode == READ_10) || (opcode == WRITE_10)) {
 			/*
 			 * Currently we only fully trace read(10) and write(10)
 			 * commands
 			 */
-			if (lrbp->cmd->request && lrbp->cmd->request->bio)
-				lba =
-				lrbp->cmd->request->bio->bi_iter.bi_sector;
+			if (cmd->request && cmd->request->bio)
+				lba = cmd->request->bio->bi_iter.bi_sector;
 			transfer_len = be32_to_cpu(
 				lrbp->ucd_req_ptr->sc.exp_data_transfer_len);
 		}
@@ -2237,7 +2237,9 @@ start:
 		 * If the timer was active but the callback was not running
 		 * we have nothing to do, just change state and return.
 		 */
-		if (hrtimer_try_to_cancel(&hba->clk_gating.gate_hrtimer) == 1) {
+		if ((hrtimer_try_to_cancel(&hba->clk_gating.gate_hrtimer) == 1)
+			&& !(work_pending(&hba->clk_gating.gate_work))
+			&& !hba->clk_gating.gate_wk_in_process) {
 			hba->clk_gating.state = CLKS_ON;
 			trace_ufshcd_clk_gating(dev_name(hba->dev),
 						hba->clk_gating.state);
@@ -2289,7 +2291,9 @@ static void ufshcd_gate_work(struct work_struct *work)
 						clk_gating.gate_work);
 	unsigned long flags;
 
+	hba->clk_gating.gate_wk_in_process = true;
 	spin_lock_irqsave(hba->host->host_lock, flags);
+
 	if (hba->clk_gating.state == CLKS_OFF)
 		goto rel_lock;
 	/*
@@ -2365,6 +2369,7 @@ static void ufshcd_gate_work(struct work_struct *work)
 rel_lock:
 	spin_unlock_irqrestore(hba->host->host_lock, flags);
 out:
+	hba->clk_gating.gate_wk_in_process = false;
 	return;
 }
 
@@ -3064,13 +3069,13 @@ int ufshcd_send_command(struct ufs_hba *hba, unsigned int task_tag)
 {
 	hba->lrb[task_tag].issue_time_stamp = ktime_get();
 	hba->lrb[task_tag].compl_time_stamp = ktime_set(0, 0);
+	ufshcd_cond_add_cmd_trace(hba, task_tag,
+			hba->lrb[task_tag].cmd ? "scsi_send" : "dev_cmd_send");
 	ufshcd_clk_scaling_start_busy(hba);
 	__set_bit(task_tag, &hba->outstanding_reqs);
 	ufshcd_writel(hba, 1 << task_tag, REG_UTP_TRANSFER_REQ_DOOR_BELL);
 	/* Make sure that doorbell is committed immediately */
 	wmb();
-	ufshcd_cond_add_cmd_trace(hba, task_tag,
-			hba->lrb[task_tag].cmd ? "scsi_send" : "dev_cmd_send");
 	ufshcd_update_tag_stats(hba, task_tag);
 	return 0;
 }
@@ -3827,7 +3832,6 @@ static int ufshcd_queuecommand(struct Scsi_Host *host, struct scsi_cmnd *cmd)
 
 	err = ufshcd_map_sg(hba, lrbp);
 	if (err) {
-		ufshcd_release(hba, false);
 		lrbp->cmd = NULL;
 		clear_bit_unlock(tag, &hba->lrb_in_use);
 		ufshcd_release_all(hba);
