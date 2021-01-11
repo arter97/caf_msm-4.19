@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * Copyright (c) 2018-2019, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2018-2020, The Linux Foundation. All rights reserved.
  */
 #ifndef __KGSL_GMU_CORE_H
 #define __KGSL_GMU_CORE_H
@@ -21,7 +21,7 @@
 #error "CNOC levels cannot exceed GX levels"
 #endif
 
-#define MAX_GMU_CLKS 6
+#define MAX_GMU_CLKS 7
 
 /*
  * These are the different ways the GMU can boot. GMU_WARM_BOOT is waking up
