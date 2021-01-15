@@ -1582,6 +1582,41 @@ static void android_disconnect(struct usb_gadget *gadget)
 }
 #endif
 
+#if defined (CONFIG_MULTI_GADGETS) && defined (CONFIG_USB_CONFIGFS_UEVENT)
+static const struct usb_gadget_driver configfs_driver_template_android = {
+	.bind           = configfs_composite_bind,
+	.unbind         = configfs_composite_unbind,
+	.setup          = android_setup,
+	.reset          = android_disconnect,
+	.disconnect     = android_disconnect,
+	.suspend	= composite_suspend,
+	.resume		= composite_resume,
+
+	.max_speed	= USB_SPEED_SUPER_PLUS,
+	.driver = {
+		.owner          = THIS_MODULE,
+		.name		= "configfs-gadget-android",
+	},
+	.match_existing_only = 1,
+};
+
+static const struct usb_gadget_driver configfs_driver_template = {
+	.bind           = configfs_composite_bind,
+	.unbind         = configfs_composite_unbind,
+	.setup          = composite_setup,
+	.reset          = composite_disconnect,
+	.disconnect     = composite_disconnect,
+	.suspend	= composite_suspend,
+	.resume		= composite_resume,
+
+	.max_speed	= USB_SPEED_SUPER_PLUS,
+	.driver = {
+		.owner          = THIS_MODULE,
+		.name		= "configfs-gadget",
+	},
+	.match_existing_only = 1,
+};
+#else //CONFIG_MULTI_GADGETS
 static const struct usb_gadget_driver configfs_driver_template = {
 	.bind           = configfs_composite_bind,
 	.unbind         = configfs_composite_unbind,
@@ -1604,6 +1639,7 @@ static const struct usb_gadget_driver configfs_driver_template = {
 	},
 	.match_existing_only = 1,
 };
+#endif //CONFIG_MULTI_GADGETS
 
 #ifdef CONFIG_USB_CONFIGFS_UEVENT
 static ssize_t state_show(struct device *pdev, struct device_attribute *attr,
@@ -1739,7 +1775,14 @@ static struct config_group *gadgets_make(
 	gi->cdev.desc.bDescriptorType = USB_DT_DEVICE;
 	gi->cdev.desc.bcdDevice = cpu_to_le16(get_default_bcdDevice());
 
+#if defined (CONFIG_MULTI_GADGETS) && defined (CONFIG_USB_CONFIGFS_UEVENT)
+	if(strcmp(name, "g1") == 0)
+		gi->composite.gadget_driver = configfs_driver_template_android;
+	else
+		gi->composite.gadget_driver = configfs_driver_template;
+#else
 	gi->composite.gadget_driver = configfs_driver_template;
+#endif
 
 	gi->composite.gadget_driver.function = kstrdup(name, GFP_KERNEL);
 	gi->composite.name = gi->composite.gadget_driver.function;
