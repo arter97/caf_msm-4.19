@@ -324,6 +324,11 @@ dma_addr_t mhi_to_physical(struct mhi_ring *ring, void *addr)
 	return (addr - ring->base) + ring->iommu_base;
 }
 
+static bool is_valid_ring_ptr(struct mhi_ring *ring, dma_addr_t addr)
+{
+	return addr >= ring->iommu_base && addr < ring->iommu_base + ring->len;
+}
+
 static void mhi_recycle_ev_ring_element(struct mhi_controller *mhi_cntrl,
 					struct mhi_ring *ring)
 {
@@ -930,6 +935,12 @@ static int parse_xfer_event(struct mhi_controller *mhi_cntrl,
 		struct mhi_buf_info *buf_info;
 		u16 xfer_len;
 
+		if (!is_valid_ring_ptr(tre_ring, ptr)) {
+			MHI_ERR("Event element points outside of the tre ring.");
+			MHI_ERR("Pointer 0x%llx(DMA address).\n", ptr);
+			break;
+		}
+
 		/* Get the TRB this event points to */
 		ev_tre = mhi_to_virtual(tre_ring, ptr);
 
@@ -1121,6 +1132,12 @@ static void mhi_process_cmd_completion(struct mhi_controller *mhi_cntrl,
 	enum mhi_cmd_type type;
 	u32 chan;
 
+	if (!is_valid_ring_ptr(mhi_ring, ptr)) {
+		MHI_ERR("Event element points outside of the cmd ring.");
+		MHI_ERR("Pointer 0x%llx(DMA address).\n", ptr);
+		return;
+	}
+
 	cmd_pkt = mhi_to_virtual(mhi_ring, ptr);
 
 	/* out of order completion received */
@@ -1163,6 +1180,7 @@ int mhi_process_ctrl_ev_ring(struct mhi_controller *mhi_cntrl,
 	u32 chan;
 	struct mhi_chan *mhi_chan;
 	unsigned long flags;
+	dma_addr_t ptr;
 
 	/*
 	 * this is a quick check to avoid unnecessary event processing
@@ -1175,7 +1193,14 @@ int mhi_process_ctrl_ev_ring(struct mhi_controller *mhi_cntrl,
 		return -EIO;
 	}
 
-	dev_rp = mhi_to_virtual(ev_ring, er_ctxt->rp);
+	ptr = er_ctxt->rp;
+	if (!is_valid_ring_ptr(ev_ring, ptr)) {
+		MHI_ERR("Event ring rp points outside of the event ring.");
+		MHI_ERR("Pointer 0x%llx(DMA address).\n", ptr);
+		return -EIO;
+	}
+
+	dev_rp = mhi_to_virtual(ev_ring, ptr);
 	local_rp = ev_ring->rp;
 
 	while (dev_rp != local_rp) {
@@ -1289,7 +1314,16 @@ int mhi_process_ctrl_ev_ring(struct mhi_controller *mhi_cntrl,
 		}
 		case MHI_PKT_TYPE_TX_EVENT:
 			chan = MHI_TRE_GET_EV_CHID(local_rp);
+			if (chan >= mhi_cntrl->max_chan) {
+				MHI_ERR("Invalid channel id %u\n", chan);
+				break;
+			}
 			mhi_chan = &mhi_cntrl->mhi_chan[chan];
+			if (!mhi_chan->configured) {
+				MHI_ERR("Event references invalid channel %u\n",
+					chan);
+				break;
+			}
 			parse_xfer_event(mhi_cntrl, local_rp, mhi_chan);
 			event_quota--;
 			break;
@@ -1302,7 +1336,15 @@ int mhi_process_ctrl_ev_ring(struct mhi_controller *mhi_cntrl,
 		mhi_recycle_ev_ring_element(mhi_cntrl, ev_ring);
 		spin_unlock_irqrestore(&mhi_event->lock, flags);
 		local_rp = ev_ring->rp;
-		dev_rp = mhi_to_virtual(ev_ring, er_ctxt->rp);
+
+		ptr = er_ctxt->rp;
+		if (!is_valid_ring_ptr(ev_ring, ptr)) {
+			MHI_ERR("Event ring rp points outside of the event ring.");
+			MHI_ERR("Pointer 0x%llx(DMA address).\n", ptr);
+			return -EIO;
+		}
+		dev_rp = mhi_to_virtual(ev_ring, ptr);
+
 		count++;
 	}
 
@@ -1327,6 +1369,7 @@ int mhi_process_data_event_ring(struct mhi_controller *mhi_cntrl,
 	int count = 0;
 	u32 chan;
 	struct mhi_chan *mhi_chan;
+	dma_addr_t ptr;
 
 	if (unlikely(MHI_EVENT_ACCESS_INVALID(mhi_cntrl->pm_state))) {
 		MHI_LOG("No EV access, PM_STATE:%s\n",
@@ -1334,7 +1377,14 @@ int mhi_process_data_event_ring(struct mhi_controller *mhi_cntrl,
 		return -EIO;
 	}
 
-	dev_rp = mhi_to_virtual(ev_ring, er_ctxt->rp);
+	ptr = er_ctxt->rp;
+	if (!is_valid_ring_ptr(ev_ring, ptr)) {
+		MHI_ERR("Event ring rp points outside of the event ring.");
+		MHI_ERR("Pointer 0x%llx(DMA address).\n", ptr);
+		return -EIO;
+	}
+
+	dev_rp = mhi_to_virtual(ev_ring, ptr);
 	local_rp = ev_ring->rp;
 
 	while (dev_rp != local_rp && event_quota > 0) {
@@ -1355,6 +1405,11 @@ int mhi_process_data_event_ring(struct mhi_controller *mhi_cntrl,
 		}
 		mhi_chan = &mhi_cntrl->mhi_chan[chan];
 
+		if (!mhi_chan->configured) {
+			MHI_ERR("Event references invalid chan %u\n", chan);
+			goto next_er_element;
+		}
+
 		if (likely(type == MHI_PKT_TYPE_TX_EVENT)) {
 			parse_xfer_event(mhi_cntrl, local_rp, mhi_chan);
 			event_quota--;
@@ -1366,7 +1421,13 @@ int mhi_process_data_event_ring(struct mhi_controller *mhi_cntrl,
 next_er_element:
 		mhi_recycle_ev_ring_element(mhi_cntrl, ev_ring);
 		local_rp = ev_ring->rp;
-		dev_rp = mhi_to_virtual(ev_ring, er_ctxt->rp);
+		ptr = er_ctxt->rp;
+		if (!is_valid_ring_ptr(ev_ring, ptr)) {
+			MHI_ERR("Event ring rp points outside of the event ring.");
+			MHI_ERR("Pointer 0x%llx(DMA address).\n", ptr);
+			return -EIO;
+		}
+		dev_rp = mhi_to_virtual(ev_ring, ptr);
 		count++;
 	}
 	read_lock_bh(&mhi_cntrl->pm_lock);
@@ -1391,9 +1452,20 @@ int mhi_process_tsync_ev_ring(struct mhi_controller *mhi_cntrl,
 	u32 sequence;
 	u64 remote_time;
 	int ret = 0;
+	dma_addr_t ptr;
 
 	spin_lock_bh(&mhi_event->lock);
-	dev_rp = mhi_to_virtual(ev_ring, er_ctxt->rp);
+
+	ptr = er_ctxt->rp;
+	if (!is_valid_ring_ptr(ev_ring, ptr)) {
+		spin_unlock_bh(&mhi_event->lock);
+		MHI_ERR("Event ring rp points outside of the event ring.");
+		MHI_ERR("Pointer 0x%llx(DMA address).\n", ptr);
+		ret = -EIO;
+		goto exit_tsync_process;
+	}
+
+	dev_rp = mhi_to_virtual(ev_ring, ptr);
 	if (ev_ring->rp == dev_rp) {
 		spin_unlock_bh(&mhi_event->lock);
 		goto exit_tsync_process;
@@ -1483,9 +1555,20 @@ int mhi_process_bw_scale_ev_ring(struct mhi_controller *mhi_cntrl,
 		&mhi_cntrl->mhi_ctxt->er_ctxt[mhi_event->er_index];
 	struct mhi_link_info link_info, *cur_info = &mhi_cntrl->mhi_link_info;
 	int result, ret = 0;
+	dma_addr_t ptr;
 
 	spin_lock_bh(&mhi_event->lock);
-	dev_rp = mhi_to_virtual(ev_ring, er_ctxt->rp);
+
+	ptr = er_ctxt->rp;
+	if (!is_valid_ring_ptr(ev_ring, ptr)) {
+		spin_unlock_bh(&mhi_event->lock);
+		MHI_ERR("Event ring rp points outside of the event ring.");
+		MHI_ERR("Pointer 0x%llx(DMA address).\n", ptr);
+		ret = -EIO;
+		goto exit_bw_scale_process;
+	}
+
+	dev_rp = mhi_to_virtual(ev_ring, ptr);
 
 	if (ev_ring->rp == dev_rp) {
 		spin_unlock_bh(&mhi_event->lock);
@@ -1618,7 +1701,17 @@ irqreturn_t mhi_msi_handlr(int irq_number, void *dev)
 	struct mhi_event_ctxt *er_ctxt =
 		&mhi_cntrl->mhi_ctxt->er_ctxt[mhi_event->er_index];
 	struct mhi_ring *ev_ring = &mhi_event->ring;
-	void *dev_rp = mhi_to_virtual(ev_ring, er_ctxt->rp);
+	void *dev_rp;
+	dma_addr_t ptr;
+
+	ptr = er_ctxt->rp;
+	if (!is_valid_ring_ptr(ev_ring, ptr)) {
+		MHI_ERR("Event ring rp points outside of the event ring.");
+		MHI_ERR("Pointer 0x%llx(DMA address).\n", ptr);
+		return IRQ_HANDLED;
+	}
+
+	dev_rp = mhi_to_virtual(ev_ring, ptr);
 
 	/* confirm ER has pending events to process before scheduling work */
 	if (ev_ring->rp == dev_rp)
@@ -1976,6 +2069,7 @@ static void mhi_mark_stale_events(struct mhi_controller *mhi_cntrl,
 	struct mhi_tre *dev_rp, *local_rp;
 	struct mhi_ring *ev_ring;
 	unsigned long flags;
+	dma_addr_t ptr;
 
 	MHI_LOG("Marking all events for chan:%d as stale\n", chan);
 
@@ -1983,8 +2077,15 @@ static void mhi_mark_stale_events(struct mhi_controller *mhi_cntrl,
 
 	/* mark all stale events related to channel as STALE event */
 	spin_lock_irqsave(&mhi_event->lock, flags);
-	dev_rp = mhi_to_virtual(ev_ring, er_ctxt->rp);
 
+	ptr = er_ctxt->rp;
+	if (!is_valid_ring_ptr(ev_ring, ptr)) {
+		MHI_ERR("Event ring rp points outside of the event ring.");
+		MHI_ERR("Pointer 0x%llx(DMA address).\n", ptr);
+		goto err_unlock;
+	}
+
+	dev_rp = mhi_to_virtual(ev_ring, ptr);
 	local_rp = ev_ring->rp;
 	while (dev_rp != local_rp) {
 		if (MHI_TRE_GET_EV_TYPE(local_rp) ==
@@ -1999,6 +2100,7 @@ static void mhi_mark_stale_events(struct mhi_controller *mhi_cntrl,
 
 
 	MHI_LOG("Finished marking events as stale events\n");
+err_unlock:
 	spin_unlock_irqrestore(&mhi_event->lock, flags);
 }
 
