@@ -487,7 +487,7 @@ void lt9611_firmware_upgrade(struct lt9611 *pdata,
 
 	if (!memcmp(cfg->data, fw_read_data, data_len)) {
 		pdata->fw_status = UPDATE_SUCCESS;
-		pr_debug("LT9611 Firmware upgrade success.\n");
+		pr_info("LT9611 Firmware upgrade success.\n");
 	} else {
 		pdata->fw_status = UPDATE_FAILED;
 		pr_err("LT9611 Firmware upgrade failed\n");
@@ -1323,30 +1323,20 @@ static void lt9611_set_preferred_mode(struct drm_connector *connector)
 	struct drm_display_mode *mode, *last_mode;
 	const char *string;
 
-	if (pdata->fix_mode) {
-		list_for_each_entry(mode, &connector->probed_modes, head) {
-			if (pdata->debug_mode.vdisplay == mode->vdisplay &&
-				pdata->debug_mode.hdisplay == mode->hdisplay &&
-				pdata->debug_mode.vrefresh == mode->vrefresh) {
-				mode->type |= DRM_MODE_TYPE_PREFERRED;
-			}
-		}
+	if (pdata->edid) {
+		lt9611_choose_best_mode(connector);
 	} else {
-		if (pdata->edid) {
-			lt9611_choose_best_mode(connector);
-		} else {
-			if (!of_property_read_string(pdata->dev->of_node,
-				"lt,preferred-mode", &string)) {
-				list_for_each_entry(mode, &connector->probed_modes, head) {
-					if (!strcmp(mode->name, string))
-						mode->type |= DRM_MODE_TYPE_PREFERRED;
-				}
-			} else {
-				list_for_each_entry(mode, &connector->probed_modes, head) {
-					last_mode = mode;
-				}
-				last_mode->type |= DRM_MODE_TYPE_PREFERRED;
+		if (!of_property_read_string(pdata->dev->of_node,
+			"lt,preferred-mode", &string)) {
+			list_for_each_entry(mode, &connector->probed_modes, head) {
+				if (!strcmp(mode->name, string))
+					mode->type |= DRM_MODE_TYPE_PREFERRED;
 			}
+		} else {
+			list_for_each_entry(mode, &connector->probed_modes, head) {
+				last_mode = mode;
+			}
+			last_mode->type |= DRM_MODE_TYPE_PREFERRED;
 		}
 	}
 }
@@ -1412,13 +1402,22 @@ static enum drm_mode_status lt9611_connector_mode_valid(
 	struct lt9611 *pdata = connector_to_lt9611(connector);
 	struct drm_display_mode *mode, *n;
 
-	pr_debug("mode valid h=%d v=%d fps=%d\n", drm_mode->hdisplay,
+	drm_mode->vrefresh = drm_mode_vrefresh(drm_mode);
+
+	pr_debug("mode valid enter h=%d v=%d fps=%d\n", drm_mode->hdisplay,
 		drm_mode->vdisplay, drm_mode->vrefresh);
 
-	list_for_each_entry_safe(mode, n, &pdata->mode_list, head) {
-		if (drm_mode->vdisplay == mode->vdisplay &&
-			drm_mode->hdisplay == mode->hdisplay &&
-			drm_mode->vrefresh == mode->vrefresh)
+	if (!pdata->fix_mode) {
+		list_for_each_entry_safe(mode, n, &pdata->mode_list, head) {
+			if (drm_mode->vdisplay == mode->vdisplay &&
+				drm_mode->hdisplay == mode->hdisplay &&
+				drm_mode->vrefresh == mode->vrefresh)
+				return MODE_OK;
+		}
+	} else {
+		if (drm_mode->vdisplay == pdata->debug_mode.vdisplay &&
+			drm_mode->hdisplay == pdata->debug_mode.hdisplay &&
+			drm_mode->vrefresh == pdata->debug_mode.vrefresh)
 			return MODE_OK;
 	}
 
@@ -1556,7 +1555,10 @@ static bool lt9611_bridge_mode_fixup(struct drm_bridge *bridge,
 				  const struct drm_display_mode *mode,
 				  struct drm_display_mode *adjusted_mode)
 {
-	pr_debug("mode fix up\n");
+	pr_debug(" hdisplay=%d, vdisplay=%d, vrefresh=%d, clock=%d\n",
+		adjusted_mode->hdisplay, adjusted_mode->vdisplay,
+		adjusted_mode->vrefresh, adjusted_mode->clock);
+
 	return true;
 }
 
@@ -1788,8 +1790,9 @@ static int lt9611_probe(struct i2c_client *client,
 		if (ret) {
 			pr_err("Failed to invoke firmware loader: %d\n", ret);
 			goto err_i2c_prog;
-		} else
+		} else {
 			return 0;
+		}
 	}
 
 	mutex_init(&pdata->lock);
