@@ -93,7 +93,7 @@ static bool use_obex = false;
 module_param(use_obex, bool, 0);
 MODULE_PARM_DESC(use_obex, "Use CDC OBEX, default=no");
 
-static unsigned n_ports = 1;
+static unsigned n_ports = 2;
 module_param(n_ports, uint, 0);
 MODULE_PARM_DESC(n_ports, "number of ports to create, default=1");
 
