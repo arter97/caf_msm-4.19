@@ -91,6 +91,7 @@ struct lt9611 {
 
 	u32 num_of_modes;
 	struct list_head mode_list;
+	struct list_head support_mode_list;
 
 	struct drm_display_mode curr_mode;
 	struct drm_display_mode debug_mode;
@@ -122,6 +123,7 @@ void lt9611_hpd_work(struct work_struct *work)
 	enum drm_connector_status last_status;
 	struct drm_device *dev = NULL;
 	struct lt9611 *pdata = container_of(work, struct lt9611, work);
+	struct drm_display_mode *mode, *n;
 
 	if (!pdata || !pdata->connector.funcs ||
 		!pdata->connector.funcs->detect)
@@ -137,6 +139,10 @@ void lt9611_hpd_work(struct work_struct *work)
 
 	if (pdata->connector.status != connector_status_connected) {
 		pr_debug("release edid\n");
+		list_for_each_entry_safe(mode, n, &pdata->support_mode_list, head) {
+			list_del(&mode->head);
+			kfree(mode);
+		}
 		pdata->edid_complete = false;
 		kfree(pdata->edid);
 		pdata->edid = NULL;
@@ -1400,26 +1406,49 @@ static enum drm_mode_status lt9611_connector_mode_valid(
 	struct drm_connector *connector, struct drm_display_mode *drm_mode)
 {
 	struct lt9611 *pdata = connector_to_lt9611(connector);
-	struct drm_display_mode *mode, *n;
+	struct drm_display_mode *mode, *n, *m, *mode_list;
+	bool mode_exist = false;
 
 	drm_mode->vrefresh = drm_mode_vrefresh(drm_mode);
 
 	pr_debug("mode valid enter h=%d v=%d fps=%d\n", drm_mode->hdisplay,
 		drm_mode->vdisplay, drm_mode->vrefresh);
 
-	if (!pdata->fix_mode) {
-		list_for_each_entry_safe(mode, n, &pdata->mode_list, head) {
-			if (drm_mode->vdisplay == mode->vdisplay &&
-				drm_mode->hdisplay == mode->hdisplay &&
-				drm_mode->vrefresh == mode->vrefresh &&
-				drm_mode->clock == mode->clock)
+	list_for_each_entry_safe(mode, n, &pdata->mode_list, head) {
+		if (drm_mode->vdisplay == mode->vdisplay &&
+			drm_mode->hdisplay == mode->hdisplay &&
+			drm_mode->vrefresh == mode->vrefresh &&
+			drm_mode->clock == mode->clock) {
+			list_for_each_entry(mode_list, &pdata->support_mode_list, head){
+				if (mode_list->vdisplay == drm_mode->vdisplay &&
+					mode_list->hdisplay == drm_mode->hdisplay &&
+					mode_list->vrefresh == drm_mode->vrefresh) {
+					mode_exist = true;
+					break;
+				}
+			}
+
+			if (!mode_exist) {
+				m = kzalloc(sizeof(*m), GFP_KERNEL);
+				if (!m) {
+					pr_err("Out of memory\n");
+					return -ENOMEM;
+				}
+				m->vdisplay = drm_mode->vdisplay;
+				m->hdisplay = drm_mode->hdisplay;
+				m->vrefresh = drm_mode->vrefresh;
+				list_add_tail(&m->head, &pdata->support_mode_list);
+			}
+
+			if (drm_mode->vdisplay == pdata->debug_mode.vdisplay &&
+				drm_mode->hdisplay == pdata->debug_mode.hdisplay &&
+				drm_mode->vrefresh == pdata->debug_mode.vrefresh &&
+				pdata->fix_mode)
+				return MODE_OK;
+
+			if (!pdata->fix_mode)
 				return MODE_OK;
 		}
-	} else {
-		if (drm_mode->vdisplay == pdata->debug_mode.vdisplay &&
-			drm_mode->hdisplay == pdata->debug_mode.hdisplay &&
-			drm_mode->vrefresh == pdata->debug_mode.vrefresh)
-			return MODE_OK;
 	}
 
 	return MODE_BAD;
@@ -1674,14 +1703,33 @@ err:
 	return -EINVAL;
 }
 
+static ssize_t hdmi_mode_list_show(struct device *dev,
+	struct device_attribute *attr, char *buf)
+{
+	struct lt9611 *pdata = dev_get_drvdata(dev);
+	struct drm_display_mode *mode;
+	int len = 0, size = 0;
+
+	list_for_each_entry(mode, &pdata->support_mode_list, head) {
+		len = scnprintf(buf, PAGE_SIZE - size, "%dx%d@%d\n",
+			mode->hdisplay, mode->vdisplay, mode->vrefresh);
+		size += len;
+		buf += len;
+	}
+
+	return size;
+}
+
 static DEVICE_ATTR_WO(dump_info);
 static DEVICE_ATTR_RW(firmware_upgrade);
 static DEVICE_ATTR_RW(edid_mode);
+static DEVICE_ATTR_RO(hdmi_mode_list);
 
 static struct attribute *lt9611_sysfs_attrs[] = {
 	&dev_attr_dump_info.attr,
 	&dev_attr_firmware_upgrade.attr,
 	&dev_attr_edid_mode.attr,
+	&dev_attr_hdmi_mode_list.attr,
 	NULL,
 };
 
@@ -1820,6 +1868,8 @@ static int lt9611_probe(struct i2c_client *client,
 		pr_err("failed to request irq\n");
 		goto err_i2c_prog;
 	}
+
+	INIT_LIST_HEAD(&pdata->support_mode_list);
 
 	return 0;
 
