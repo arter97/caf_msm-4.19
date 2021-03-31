@@ -23,6 +23,7 @@
 #include <linux/of.h>
 #include <linux/of_platform.h>
 #include <linux/of_gpio.h>
+#include <linux/gpio/consumer.h>
 #include <linux/list.h>
 #include <linux/uaccess.h>
 #include <linux/usb/ch9.h>
@@ -353,6 +354,7 @@ struct dwc3_msm {
 	u64			dummy_gsi_db;
 	dma_addr_t		dummy_gsi_db_dma;
 	int			orientation_override;
+	struct gpio_desc *vbus_out_gpiod;
 };
 
 #define USB_HSPHY_3P3_VOL_MIN		3050000 /* uV */
@@ -3576,6 +3578,40 @@ static ssize_t bus_vote_store(struct device *dev,
 }
 static DEVICE_ATTR_RW(bus_vote);
 
+static ssize_t vbus_output_show(struct device *dev,
+		struct device_attribute *attr, char *buf)
+{
+	struct dwc3_msm *mdwc = dev_get_drvdata(dev);
+	int vbus;
+
+	vbus = mdwc->vbus_out_gpiod ?
+		gpiod_get_value_cansleep(mdwc->vbus_out_gpiod) : -1;
+
+	return snprintf(buf, PAGE_SIZE, "%d\n", vbus);
+}
+
+static ssize_t vbus_output_store(struct device *dev,
+		struct device_attribute *attr, const char *buf,
+		size_t count)
+{
+	struct dwc3_msm *mdwc = dev_get_drvdata(dev);
+
+	if (sysfs_streq(buf, "1")) {
+		if (mdwc->vbus_out_gpiod)
+			gpiod_set_value_cansleep(mdwc->vbus_out_gpiod, 1);
+	} else if (sysfs_streq(buf, "0")) {
+		if (mdwc->vbus_out_gpiod)
+			gpiod_set_value_cansleep(mdwc->vbus_out_gpiod, 0);
+	} else {
+		dev_err(dev, "invalid input");
+		return -EINVAL;
+	}
+
+	return count;
+}
+static DEVICE_ATTR_RW(vbus_output);
+
+
 static int dwc_dpdm_cb(struct notifier_block *nb, unsigned long evt, void *p)
 {
 	struct dwc3_msm *mdwc = container_of(nb, struct dwc3_msm, dpdm_nb);
@@ -3615,7 +3651,7 @@ static int dwc3_msm_probe(struct platform_device *pdev)
 
 	platform_set_drvdata(pdev, mdwc);
 	mdwc->dev = &pdev->dev;
-
+	mdwc->in_restart = false;
 	INIT_LIST_HEAD(&mdwc->req_complete_list);
 	INIT_WORK(&mdwc->resume_work, dwc3_resume_work);
 	INIT_WORK(&mdwc->restart_usb_work, dwc3_restart_usb_work);
@@ -3802,6 +3838,14 @@ static int dwc3_msm_probe(struct platform_device *pdev)
 		}
 	}
 
+	mdwc->vbus_out_gpiod = devm_gpiod_get_optional(&pdev->dev, "vbus-out",
+						   GPIOD_OUT_HIGH);
+	if (IS_ERR(mdwc->vbus_out_gpiod))
+		dev_err(&pdev->dev, "get vbus_out_gpiod error!\n");
+	else {
+		gpiod_set_value_cansleep(mdwc->vbus_out_gpiod, 1);
+	}
+
 	/* Assumes dwc3 is the first DT child of dwc3-msm */
 	dwc3_node = of_get_next_available_child(node, NULL);
 	if (!dwc3_node) {
@@ -3967,6 +4011,7 @@ static int dwc3_msm_probe(struct platform_device *pdev)
 	device_create_file(&pdev->dev, &dev_attr_speed);
 	device_create_file(&pdev->dev, &dev_attr_usb_compliance_mode);
 	device_create_file(&pdev->dev, &dev_attr_bus_vote);
+	device_create_file(&pdev->dev, &dev_attr_vbus_output);
 
 	return 0;
 
