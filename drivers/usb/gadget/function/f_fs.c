@@ -937,18 +937,19 @@ static ssize_t __ffs_epfile_read_data(struct ffs_epfile *epfile,
 static ssize_t ffs_epfile_io(struct file *file, struct ffs_io_data *io_data)
 {
 	struct ffs_epfile *epfile = file->private_data;
-	struct ffs_data *ffs = epfile->ffs;
+	struct ffs_data *ffs;
 	struct usb_request *req;
 	struct ffs_ep *ep;
 	char *data = NULL;
 	ssize_t ret, data_len = -EINVAL;
 	int halt;
 
-	ffs_log("enter: %s", epfile->name);
-
 	/* Are we still active? */
 	if (WARN_ON(epfile->ffs->state != FFS_ACTIVE))
 		return -ENODEV;
+
+	ffs = epfile->ffs;
+	ffs_log("enter: %s", epfile->name);
 
 	/* Wait for endpoint to be enabled */
 	ep = epfile->ep;
@@ -3738,8 +3739,11 @@ static void ffs_func_unbind(struct usb_configuration *c,
 		ffs->func = NULL;
 	}
 
-	if (!--opts->refcnt)
+	if (!--opts->refcnt) {
+		ffs_event_add(ffs, FUNCTIONFS_UNBIND);
 		functionfs_unbind(ffs);
+		return;
+	}
 
 	/* cleanup after autoconfig */
 	spin_lock_irqsave(&func->ffs->eps_lock, flags);
