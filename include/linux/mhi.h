@@ -1168,4 +1168,10 @@ char *mhi_get_restart_reason(const char *name);
  */
 void mhi_do_soc_reset(struct mhi_controller *mhi_cntrl);
 
+/**
+ * mhi_get_exec_env - Get BHI execution environment of the device
+ * @mhi_cntrl: MHI controller
+ */
+enum mhi_ee mhi_get_exec_env(struct mhi_controller *mhi_cntrl);
+
 #endif /* _MHI_H_ */
