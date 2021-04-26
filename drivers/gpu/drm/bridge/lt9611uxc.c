@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2020-2021, The Linux Foundation. All rights reserved.
  */
 
 #define pr_fmt(fmt) "%s: " fmt, __func__
@@ -835,6 +835,8 @@ static void lt9611_reset(struct lt9611 *pdata, bool on_off)
 	} else {
 		gpio_set_value(pdata->reset_gpio, 0);
 	}
+	/* Need longer time to wait LT9611UXC reset finished. */
+	msleep(100);
 }
 
 static void lt9611_assert_5v(struct lt9611 *pdata)
