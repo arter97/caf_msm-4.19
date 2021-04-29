@@ -475,6 +475,7 @@ static const struct nla_policy nl80211_policy[NUM_NL80211_ATTR] = {
 		.type = NLA_EXACT_LEN,
 		.len = sizeof(struct ieee80211_he_6ghz_capa),
 	},
+	[NL80211_ATTR_SAE_PWE] = { .type = NLA_U16 }
 };
 
 /* policy for the key attributes */
@@ -8811,6 +8812,10 @@ static int nl80211_crypto_settings(struct cfg80211_registered_device *rdev,
 		settings->psk = nla_data(info->attrs[NL80211_ATTR_PMK]);
 	}
 
+	if (info->attrs[NL80211_ATTR_SAE_PWE]) {
+		settings->sae_pwe = nla_get_u16(
+					info->attrs[NL80211_ATTR_SAE_PWE]);
+	}
 	return 0;
 }
 
