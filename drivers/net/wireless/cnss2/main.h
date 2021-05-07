@@ -3,7 +3,6 @@
 
 #ifndef _CNSS_MAIN_H
 #define _CNSS_MAIN_H
-
 #include <asm/arch_timer.h>
 #include <linux/esoc_client.h>
 #include <linux/etherdevice.h>
@@ -11,38 +10,113 @@
 #include <linux/pm_qos.h>
 #include <net/cnss2.h>
 #include <soc/qcom/memory_dump.h>
-#if defined(CONFIG_MSM_SUBSYSTEM_RESTART) || defined(CONFIG_SUBSYSTEM_RAMDUMP)
-#include <soc/qcom/ramdump.h>
-#endif
-#ifdef CONFIG_MSM_SUBSYSTEM_RESTART
-#include <soc/qcom/subsystem_notif.h>
 #include <soc/qcom/subsystem_restart.h>
-#endif
 
 #include "qmi.h"
+#include "bus.h"
 
 #define MAX_NO_OF_MAC_ADDR		4
 #define QMI_WLFW_MAX_TIMESTAMP_LEN	32
 #define QMI_WLFW_MAX_NUM_MEM_SEG	32
-#define QMI_WLFW_MAX_BUILD_ID_LEN	128
 #define CNSS_RDDM_TIMEOUT_MS		20000
 #define RECOVERY_TIMEOUT		60000
-#define WLAN_WD_TIMEOUT_MS		60000
 #define TIME_CLOCK_FREQ_HZ		19200000
-#define CNSS_RAMDUMP_MAGIC		0x574C414E
+#define CNSS_NUM_META_INFO_SEGMENTS	1
+#define CNSS_RAMDUMP_MAGIC		0x574C414E /* WLAN in ASCII */
 #define CNSS_RAMDUMP_VERSION		0
 #define MAX_FIRMWARE_NAME_LEN		20
 
+/* Currently these target mem modes are supported for various targets
+ *
+ *				IPQ8074
+ *
+ * Start Address for all modes: 0x4B000000
+ * All offsets mentioned below are with reference to the above start address
+ *
+ * NOTE: Mode 3 and 4 are for external use cases, please do not use this for
+ * adding new modes
+ * +======+========+=========+===========+===========+===========+
+ * | MODE | Memory | BDF Off | Caldb Off | QDSS Off  |M3 Dump Off|
+ * |      |        |  256KB  |   4.5MB   |    1MB    |    1MB    |
+ * +======+========+=========+===========+===========+===========+
+ * |   0  |  97MB  | 0xC0000 |  0xA00000 | 0x5F00000 | 0x6000000 |
+ * +------+--------+---------+-----------+-----------+-----------+
+ * |   1  |  57MB  | 0xC0000 |  0xA00000 | 0x3700000 | 0x3800000 |
+ * +------+--------+---------+-----------+-----------+-----------+
+ * |   2  |  42MB  | 0xC0000 |  DISABLED | 0x2800000 | 0x2900000 |
+ * +------+--------+---------+-----------+-----------+-----------+
+ * |   3  | 127MB  | 0xC0000 |  0xA00000 | 0x7D00000 | 0x7E00000 |
+ * +------+--------+---------+-----------+-----------+-----------+
+ * |   4  |  57MB  | 0xC0000 |  0xA00000 | 0x3700000 | 0x3800000 |
+ * +======+========+=========+===========+===========+===========+
+ *
+ *				IPQ6018
+ *
+ * Start Address for all modes: 0x4AB00000
+ * All offsets mentioned below are with reference to the above start address
+ *
+ * +======+========+=========+===========+===========+===========+
+ * | MODE | Memory | BDF Off | Caldb Off | QDSS Off  |M3 Dump Off|
+ * |      |        |  256KB  |   4.5MB   |    1MB    |    1MB    |
+ * +======+========+=========+===========+===========+===========+
+ * |   0  |  87MB  | 0xC0000 |  0xA00000 | 0x5500000 | 0x5600000 |
+ * +------+--------+---------+-----------+-----------+-----------+
+ * |   1  |  57MB  | 0xC0000 |  0xA00000 | 0x3700000 | 0x3800000 |
+ * +------+--------+---------+-----------+-----------+-----------+
+ * |   2  |  42MB  | 0xC0000 |  DISABLED | 0x2800000 | 0x2900000 |
+ * +======+========+=========+===========+===========+===========+
+ *
+ *				IPQ5018
+ *
+ * Start Address for all Modes: 0x4B000000
+ * All offsets mentioned below are with reference to the above start address
+ *
+ * +======+========+=========+===========+===========+===========+
+ * | MODE | Memory | BDF Off | Caldb Off | QDSS Off  |M3 Dump Off|
+ * |      |        |  256KB  |    2MB    |    1MB    |    1MB    |
+ * +======+========+=========+===========+===========+===========+
+ * |   0  |  28MB  | 0xA00000| 0x1A00000 | 0x1900000 | 0x1800000 |
+ * +------+--------+---------+-----------+-----------+-----------+
+ * |   1  |  28MB  | 0xA00000| 0x1A00000 | 0x1900000 | 0x1800000 |
+ * +------+--------+---------+-----------+-----------+-----------+
+ * |   2  |  26MB  | 0xA00000|  DISABLED | 0x1900000 | 0x1800000 |
+ * +======+========+=========+===========+===========+===========+
+ *
+ *				QCN9000
+ *
+ * Start Address varies for each RDP, please refer RDP specific DTS file.
+ * All offsets mentioned below are with reference to the start address from DTS
+ * HREMOTE Offset is always same as Start Offset
+ *
+ * NOTE: Mode 3 and 4 are for external use cases, please do not use this for
+ * adding new modes
+ *
+ * +======+========+===========+===========+===========+===========+==========+
+ * | MODE | Memory |  HREMOTE  |M3 Dump Off| QDSS Off  | Caldb Off | MHI DMA  |
+ * |      |        |    SIZE   |    1MB    |    1MB    |    8MB    | RESERVED |
+ * +======+========+===========+===========+===========+===========+==========+
+ * |   0  |  55MB  |    45MB   | 0x2D00000 | 0x2E00000 | 0x2F00000 |   24MB   |
+ * +------+--------+-----------+-----------+-----------+-----------+----------+
+ * |   1  |  30MB  |    20MB   | 0x1400000 | 0x1500000 | 0x1600000 |   16MB   |
+ * +------+--------+-----------+-----------+-----------+-----------+----------+
+ * |   2  |  17MB  |    15MB   |  0xF00000 | 0x1000000 |  DISABLED |   16MB   |
+ * +------+--------+-----------+-----------+-----------+-----------+----------+
+ * |   3  |  65MB  |    55MB   | 0x3700000 | 0x3800000 | 0x3900000 |   24MB   |
+ * +------+--------+-----------+-----------+-----------+-----------+----------+
+ * |   4  |  33MB  |    23MB   | 0x1700000 | 0x1800000 | 0x1900000 |   24MB   |
+ * +======+========+===========+===========+===========+===========+==========+
+ */
+#define MAX_TGT_MEM_MODES		5
+
 #define CNSS_EVENT_SYNC   BIT(0)
 #define CNSS_EVENT_UNINTERRUPTIBLE BIT(1)
-#define CNSS_EVENT_UNKILLABLE BIT(2)
 #define CNSS_EVENT_SYNC_UNINTERRUPTIBLE (CNSS_EVENT_SYNC | \
 				CNSS_EVENT_UNINTERRUPTIBLE)
-#define CNSS_EVENT_SYNC_UNKILLABLE (CNSS_EVENT_SYNC | CNSS_EVENT_UNKILLABLE)
 
 enum cnss_dev_bus_type {
 	CNSS_BUS_NONE = -1,
 	CNSS_BUS_PCI,
+	CNSS_BUS_AHB
 };
 
 struct cnss_vreg_cfg {
@@ -83,23 +157,17 @@ struct cnss_pinctrl_info {
 	struct pinctrl_state *bootstrap_active;
 	struct pinctrl_state *wlan_en_active;
 	struct pinctrl_state *wlan_en_sleep;
-	int bt_en_gpio;
 };
 
-#ifdef CONFIG_MSM_SUBSYSTEM_RESTART
 struct cnss_subsys_info {
 	struct subsys_device *subsys_device;
 	struct subsys_desc subsys_desc;
 	void *subsys_handle;
+	bool subsystem_put_in_progress;
 };
-#else
-struct cnss_subsys_info {
-	void *subsys_handle;
-};
-#endif
 
 struct cnss_ramdump_info {
-	void *ramdump_dev;
+	struct ramdump_device *ramdump_dev;
 	unsigned long ramdump_size;
 	void *ramdump_va;
 	phys_addr_t ramdump_pa;
@@ -123,7 +191,7 @@ struct cnss_dump_data {
 };
 
 struct cnss_ramdump_info_v2 {
-	void *ramdump_dev;
+	struct ramdump_device *ramdump_dev;
 	unsigned long ramdump_size;
 	void *dump_data_vaddr;
 	u8 dump_data_valid;
@@ -143,13 +211,22 @@ struct cnss_bus_bw_info {
 	int current_bw_vote;
 };
 
+struct cnss_wlan_mac_addr {
+	u8 mac_addr[MAX_NO_OF_MAC_ADDR][ETH_ALEN];
+	u32 no_of_mac_addr_set;
+};
+
+struct cnss_wlan_mac_info {
+	struct cnss_wlan_mac_addr wlan_mac_addr;
+	bool is_wlan_mac_set;
+};
+
 struct cnss_fw_mem {
 	size_t size;
 	void *va;
 	phys_addr_t pa;
 	u8 valid;
 	u32 type;
-	unsigned long attrs;
 };
 
 struct wlfw_rf_chip_info {
@@ -159,6 +236,7 @@ struct wlfw_rf_chip_info {
 
 struct wlfw_rf_board_info {
 	u32 board_id;
+	u32 board_id_override;
 };
 
 struct wlfw_soc_info {
@@ -177,6 +255,7 @@ enum cnss_mem_type {
 	CNSS_MEM_M3,
 	CNSS_MEM_CAL_V01,
 	CNSS_MEM_DPD_V01,
+	CNSS_MEM_ETR,
 };
 
 enum cnss_fw_dump_type {
@@ -219,6 +298,7 @@ enum cnss_driver_event_type {
 	CNSS_DRIVER_EVENT_QDSS_TRACE_REQ_MEM,
 	CNSS_DRIVER_EVENT_QDSS_TRACE_SAVE,
 	CNSS_DRIVER_EVENT_QDSS_TRACE_FREE,
+	CNSS_DRIVER_EVENT_M3_DUMP_UPLOAD_REQ,
 	CNSS_DRIVER_EVENT_MAX,
 };
 
@@ -239,8 +319,6 @@ enum cnss_driver_state {
 	CNSS_COEX_CONNECTED,
 	CNSS_IMS_CONNECTED,
 	CNSS_IN_SUSPEND_RESUME,
-	CNSS_IN_REBOOT,
-	CNSS_QMI_DEL_SERVER,
 };
 
 struct cnss_recovery_data {
@@ -277,14 +355,14 @@ enum cnss_debug_quirks {
 	FBC_BYPASS,
 	ENABLE_DAEMON_SUPPORT,
 	DISABLE_DRV,
-	DISABLE_IO_COHERENCY,
-	IGNORE_PCI_LINK_FAILURE,
 };
 
 enum cnss_bdf_type {
 	CNSS_BDF_BIN,
 	CNSS_BDF_ELF,
 	CNSS_BDF_REGDB = 4,
+	CNSS_BDF_WIN,
+	CNSS_CALDATA_WIN,
 	CNSS_BDF_DUMMY = 255,
 };
 
@@ -300,7 +378,6 @@ struct cnss_cal_info {
 struct cnss_control_params {
 	unsigned long quirks;
 	unsigned int mhi_timeout;
-	unsigned int mhi_m2_timeout;
 	unsigned int qmi_timeout;
 	unsigned int bdf_type;
 	unsigned int time_sync_period;
@@ -331,66 +408,91 @@ enum cnss_ce_index {
 	CNSS_CE_COMMON,
 };
 
-enum cnss_timeout_type {
-	CNSS_TIMEOUT_QMI,
-	CNSS_TIMEOUT_POWER_UP,
-	CNSS_TIMEOUT_IDLE_RESTART,
-	CNSS_TIMEOUT_CALIBRATION,
-	CNSS_TIMEOUT_WLAN_WATCHDOG,
-	CNSS_TIMEOUT_RDDM,
-	CNSS_TIMEOUT_RECOVERY,
+/* M3 SSR Dump related constants and structure */
+#define M3_DUMP_OPEN_TIMEOUT 10000
+#define M3_DUMP_OPEN_COMPLETION_TIMEOUT (2 * M3_DUMP_OPEN_TIMEOUT)
+#define M3_DUMP_READ_TIMER_TIMEOUT 10000
+#define M3_DUMP_COMPLETION_TIMEOUT 300000
+struct m3_dump {
+	struct task_struct *task;
+	struct timer_list open_timer;
+	struct completion open_complete;
+	struct timer_list read_timer;
+	struct completion read_complete;
+	atomic_t open_timedout;
+	atomic_t read_timedout;
+	u32 pdev_id;
+	u32 size;
+	u64 timestamp;
+	bool file_open;
+	void *dump_addr;
+};
+
+struct target_qcn9100 {
+	void *bar_addr_va;
+	u64 bar_addr_pa;
+	u32 bar_size;
+	struct qgic2_msi *qgic2_msi;
 };
 
 struct cnss_plat_data {
+	void *wlan_priv;
 	struct platform_device *plat_dev;
+	struct platform_device_id *plat_dev_id;
+	void *pci_dev;
+	void *pci_dev_id;
 	void *bus_priv;
+	int qrtr_node_id;
+	int userpd_id;
+	char device_name[16];
+	struct cnss_vreg_info *vreg_info;
 	enum cnss_dev_bus_type bus_type;
 	struct list_head vreg_list;
 	struct list_head clk_list;
 	struct cnss_pinctrl_info pinctrl_info;
 	struct cnss_subsys_info subsys_info;
+	bool recovery_enabled;
 	struct cnss_ramdump_info ramdump_info;
 	struct cnss_ramdump_info_v2 ramdump_info_v2;
 	struct cnss_esoc_info esoc_info;
 	struct cnss_bus_bw_info bus_bw_info;
 	struct notifier_block modem_nb;
-	struct notifier_block reboot_nb;
-	struct notifier_block panic_nb;
 	struct cnss_platform_cap cap;
 	struct pm_qos_request qos_request;
 	struct cnss_device_version device_version;
 	unsigned long device_id;
+	struct cnss_wlan_driver *driver_ops;
 	enum cnss_driver_status driver_status;
 	u32 recovery_count;
-	u8 recovery_enabled;
 	unsigned long driver_state;
 	struct list_head event_list;
 	spinlock_t event_lock; /* spinlock for driver work event handling */
 	struct work_struct event_work;
 	struct workqueue_struct *event_wq;
-	struct work_struct recovery_work;
 	struct qmi_handle qmi_wlfw;
+	struct sockaddr_qrtr sq;
 	struct wlfw_rf_chip_info chip_info;
 	struct wlfw_rf_board_info board_info;
 	struct wlfw_soc_info soc_info;
 	struct wlfw_fw_version_info fw_version_info;
-	struct cnss_dev_mem_info dev_mem_info[CNSS_MAX_DEV_MEM_NUM];
-	char fw_build_id[QMI_WLFW_MAX_BUILD_ID_LEN + 1];
 	u32 otp_version;
 	u32 fw_mem_seg_len;
 	struct cnss_fw_mem fw_mem[QMI_WLFW_MAX_NUM_MEM_SEG];
 	struct cnss_fw_mem m3_mem;
 	u32 qdss_mem_seg_len;
 	struct cnss_fw_mem qdss_mem[QMI_WLFW_MAX_NUM_MEM_SEG];
+	int tgt_mem_cfg_mode;
 	u32 *qdss_reg;
 	struct cnss_pin_connect_result pin_result;
 	struct dentry *root_dentry;
 	atomic_t pm_count;
 	struct timer_list fw_boot_timer;
 	struct completion power_up_complete;
+	unsigned int wlfw_service_instance_id;
+	unsigned int service_id;
+	struct notifier_block modem_atomic_nb;
 	struct completion cal_complete;
 	struct mutex dev_lock; /* mutex for register access through debugfs */
-	struct mutex driver_ops_lock; /* mutex for external driver ops */
 	u32 device_freq_hz;
 	u32 diag_reg_read_addr;
 	u32 diag_reg_read_mem_type;
@@ -398,7 +500,6 @@ struct cnss_plat_data {
 	u8 *diag_reg_read_buf;
 	u8 cal_done;
 	u8 powered_on;
-	u8 use_fw_path_with_prefix;
 	char firmware_name[MAX_FIRMWARE_NAME_LEN];
 	char fw_fallback_name[MAX_FIRMWARE_NAME_LEN];
 	struct completion rddm_complete;
@@ -411,21 +512,25 @@ struct cnss_plat_data {
 	struct qmi_handle ims_qmi;
 	struct qmi_txn txn;
 	u64 dynamic_feature;
-	void *get_info_cb_ctx;
-	int (*get_info_cb)(void *ctx, void *event, int event_len);
-	u8 use_nv_mac;
-	u8 set_wlaon_pwr_ctrl;
-	u8 fw_pcie_gen_switch;
-	u8 pcie_gen_speed;
-	int power_up_error;
+	u64 target_assert_timestamp;
+	u8 target_asserted;
+	u32 daemon_support;
+	u32 cold_boot_support;
+	u32 caldata_support;
+	u32 eeprom_caldata_read_timeout;
+	struct m3_dump m3_dump_data;
+	union {
+		struct target_qcn9100 qcn9100;
+	};
 };
 
 #ifdef CONFIG_ARCH_QCOM
 static inline u64 cnss_get_host_timestamp(struct cnss_plat_data *plat_priv)
 {
 	u64 ticks = arch_counter_get_cntvct();
+	u32 freq = arch_timer_get_cntfrq();
 
-	do_div(ticks, TIME_CLOCK_FREQ_HZ / 100000);
+	do_div(ticks, freq / 100000);
 
 	return ticks * 10;
 }
@@ -444,6 +549,7 @@ struct cnss_plat_data *cnss_get_plat_priv(struct platform_device *plat_dev);
 int cnss_driver_event_post(struct cnss_plat_data *plat_priv,
 			   enum cnss_driver_event_type type,
 			   u32 flags, void *data);
+int cnss_get_vreg(struct cnss_plat_data *plat_priv);
 int cnss_get_vreg_type(struct cnss_plat_data *plat_priv,
 		       enum cnss_vreg_type type);
 void cnss_put_vreg_type(struct cnss_plat_data *plat_priv,
@@ -457,28 +563,26 @@ void cnss_put_clk(struct cnss_plat_data *plat_priv);
 int cnss_vreg_unvote_type(struct cnss_plat_data *plat_priv,
 			  enum cnss_vreg_type type);
 int cnss_get_pinctrl(struct cnss_plat_data *plat_priv);
-int cnss_power_on_device(struct cnss_plat_data *plat_priv);
-void cnss_power_off_device(struct cnss_plat_data *plat_priv);
-bool cnss_is_device_powered_on(struct cnss_plat_data *plat_priv);
+int cnss_power_on_device(struct cnss_plat_data *plat_priv, int device_id);
+int cnss_power_off_device(struct cnss_plat_data *plat_priv, int device_id);
+static inline bool cnss_is_device_powered_on(struct cnss_plat_data *plat_priv)
+{
+	return true;
+}
 int cnss_register_subsys(struct cnss_plat_data *plat_priv);
 void cnss_unregister_subsys(struct cnss_plat_data *plat_priv);
 int cnss_register_ramdump(struct cnss_plat_data *plat_priv);
 void cnss_unregister_ramdump(struct cnss_plat_data *plat_priv);
-int cnss_do_ramdump(struct cnss_plat_data *plat_priv);
-int cnss_do_elf_ramdump(struct cnss_plat_data *plat_priv);
 void cnss_set_pin_connect_status(struct cnss_plat_data *plat_priv);
+u32 cnss_get_wake_msi(struct cnss_plat_data *plat_priv);
+struct cnss_plat_data *cnss_get_plat_priv_by_device_id(int id);
+struct cnss_plat_data *cnss_get_plat_priv_by_qrtr_node_id(int node_id);
+struct cnss_plat_data *cnss_get_plat_priv_by_instance_id(int instance_id);
+struct cnss_plat_data *cnss_get_plat_priv(struct platform_device *plat_dev);
+int cnss_get_plat_env_index_from_plat_priv(struct cnss_plat_data *plat_priv);
+int cnss_qca9000_shutdown_part2(struct cnss_plat_data *plat_priv);
 int cnss_get_cpr_info(struct cnss_plat_data *plat_priv);
 int cnss_update_cpr_info(struct cnss_plat_data *plat_priv);
-int cnss_va_to_pa(struct device *dev, size_t size, void *va, dma_addr_t dma,
-		  phys_addr_t *pa, unsigned long attrs);
-int cnss_minidump_add_region(struct cnss_plat_data *plat_priv,
-			     enum cnss_fw_dump_type type, int seg_no,
-			     void *va, phys_addr_t pa, size_t size);
-int cnss_minidump_remove_region(struct cnss_plat_data *plat_priv,
-				enum cnss_fw_dump_type type, int seg_no,
-				void *va, phys_addr_t pa, size_t size);
-unsigned int cnss_get_timeout(struct cnss_plat_data *plat_priv,
-			      enum cnss_timeout_type);
-int cnss_pci_update_qtime_sync_period(struct device *dev,
-				      unsigned int qtime_sync_period);
+void cnss_update_platform_feature_support(u8 type, u32 instance_id, u32 value);
+
 #endif /* _CNSS_MAIN_H */
