@@ -237,4 +237,6 @@ extern void cnss_dump_qmi_history(void);
 void cnss_get_ramdump_device_name(struct device *dev,
 				  char *ramdump_dev_name,
 				  size_t ramdump_dev_name_len);
+unsigned int cnss_get_driver_mode(void);
+int cnss_set_driver_mode(unsigned int mode);
 #endif /* _NET_CNSS2_H */
