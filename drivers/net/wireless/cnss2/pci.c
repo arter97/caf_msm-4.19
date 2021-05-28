@@ -12,6 +12,7 @@
 #include <linux/completion.h>
 #include <soc/qcom/ramdump.h>
 #include <linux/of_address.h>
+#include <soc/qcom/minidump.h>
 
 #include "main.h"
 #include "debug.h"
@@ -1535,6 +1536,58 @@ static void cnss_qcn9000_crash_shutdown(struct cnss_pci_data *pci_priv)
 	cnss_pci_collect_dump_info(pci_priv, true);
 }
 
+int cnss_do_elf_ramdump(struct cnss_plat_data *plat_priv)
+{
+	struct cnss_ramdump_info_v2 *info_v2 = &plat_priv->ramdump_info_v2;
+	struct cnss_dump_data *dump_data = &info_v2->dump_data;
+	struct cnss_dump_seg *dump_seg = info_v2->dump_data_vaddr;
+	struct ramdump_segment *ramdump_segs, *s;
+	struct cnss_dump_meta_info meta_info = {0};
+	int i, ret = 0;
+
+	ramdump_segs = kcalloc(dump_data->nentries + CNSS_NUM_META_INFO_SEGMENTS,
+			       sizeof(*ramdump_segs),
+			       GFP_KERNEL);
+	if (!ramdump_segs)
+		return -ENOMEM;
+
+	s = ramdump_segs + CNSS_NUM_META_INFO_SEGMENTS;
+	for (i = 0; i < dump_data->nentries; i++) {
+		if (dump_seg->type >= CNSS_FW_DUMP_TYPE_MAX) {
+			cnss_pr_err("Unsupported dump type: %d",
+				    dump_seg->type);
+			continue;
+		}
+
+		if (meta_info.entry[dump_seg->type].entry_start == 0) {
+			meta_info.entry[dump_seg->type].type = dump_seg->type;
+			meta_info.entry[dump_seg->type].entry_start =
+			i + CNSS_NUM_META_INFO_SEGMENTS;
+		}
+		meta_info.entry[dump_seg->type].entry_num++;
+
+		s->address = dump_seg->address;
+		s->v_address = dump_seg->v_address;
+		s->size = dump_seg->size;
+		s++;
+		dump_seg++;
+	}
+
+	meta_info.magic = CNSS_RAMDUMP_MAGIC;
+	meta_info.version = CNSS_RAMDUMP_VERSION;
+	meta_info.chipset = plat_priv->device_id;
+	meta_info.total_entries = CNSS_FW_DUMP_TYPE_MAX;
+
+	ramdump_segs->v_address = &meta_info;
+	ramdump_segs->size = sizeof(meta_info);
+
+	ret = do_elf_ramdump(info_v2->ramdump_dev, ramdump_segs,
+			     dump_data->nentries + 1);
+	kfree(ramdump_segs);
+
+	return ret;
+}
+
 static int cnss_qcn9000_ramdump(struct cnss_pci_data *pci_priv)
 {
 	struct cnss_plat_data *plat_priv = pci_priv->plat_priv;
@@ -1549,69 +1602,9 @@ static int cnss_qcn9000_ramdump(struct cnss_pci_data *pci_priv)
 	    dump_data->nentries == 0)
 		return 0;
 
-	/* First segment of the dump_data will have meta info in
-	 * cnss_dump_meta_info structure format.
-	 * Allocate extra segment for meta info and start filling the dump_seg
-	 * entries from ramdump_segs + NUM_META_INFO_SEGMENTS.
-	 */
-	ramdump_segs = kcalloc(dump_data->nentries +
-			       CNSS_NUM_META_INFO_SEGMENTS,
-			       sizeof(*ramdump_segs),
-			       GFP_KERNEL);
-	if (!ramdump_segs)
-		return -ENOMEM;
-
-	meta_info = kzalloc(sizeof(*meta_info), GFP_KERNEL);
-	if (!meta_info) {
-		kfree(ramdump_segs);
-		return -ENOMEM;
-	}
-
-	meta_info->magic = CNSS_RAMDUMP_MAGIC;
-	meta_info->version = CNSS_RAMDUMP_VERSION;
-	meta_info->chipset = pci_priv->device_id;
-	meta_info->total_entries = CNSS_FW_DUMP_TYPE_MAX;
-
-	ramdump_segs->v_address = meta_info;
-	ramdump_segs->size = sizeof(*meta_info);
-
-	s = ramdump_segs + CNSS_NUM_META_INFO_SEGMENTS;
-	for (i = 0; i < dump_data->nentries; i++) {
-		if (dump_seg->type >= CNSS_FW_DUMP_TYPE_MAX) {
-			cnss_pr_err("Unsupported dump type: %d\n",
-				    dump_seg->type);
-			continue;
-		}
-
-		if (meta_info->entry[dump_seg->type].entry_start == 0) {
-			meta_info->entry[dump_seg->type].type = dump_seg->type;
-			meta_info->entry[dump_seg->type].entry_start =
-						i + CNSS_NUM_META_INFO_SEGMENTS;
-		}
-		meta_info->entry[dump_seg->type].entry_num++;
-
-		s->address = dump_seg->address;
-		s->v_address = dump_seg->v_address;
-		s->size = dump_seg->size;
-		s++;
-		dump_seg++;
-	}
-
-	meta_info->magic = CNSS_RAMDUMP_MAGIC;
-	meta_info->version = CNSS_RAMDUMP_VERSION;
-	meta_info->chipset = plat_priv->device_id;
-	meta_info->total_entries = CNSS_FW_DUMP_TYPE_MAX;
-
-	ramdump_segs->v_address = &meta_info;
-	ramdump_segs->size = sizeof(meta_info);
-
-	ret = do_elf_ramdump(info_v2->ramdump_dev, ramdump_segs,
-			     dump_data->nentries + CNSS_NUM_META_INFO_SEGMENTS);
-	cnss_pr_dbg("do_elf_ramdump returns: %d\n", ret);
-	kfree(meta_info);
-	kfree(ramdump_segs);
-
+	ret = cnss_do_elf_ramdump(plat_priv);
 	cnss_pci_clear_dump_info(pci_priv);
+	cnss_pci_deinit_mhi(pci_priv);
 
 	return ret;
 }
@@ -4024,6 +4017,84 @@ static void cnss_pci_dump_registers(struct cnss_pci_data *pci_priv)
 	cnss_pci_dump_ce_reg(pci_priv, CNSS_CE_10);
 }
 
+int cnss_minidump_add_region(struct cnss_plat_data *plat_priv,
+			     enum cnss_fw_dump_type type, int seg_no,
+			     void *va, phys_addr_t pa, size_t size)
+{
+	struct md_region md_entry;
+	int ret;
+
+	switch (type) {
+	case CNSS_FW_IMAGE:
+		snprintf(md_entry.name, sizeof(md_entry.name), "FBC_%X",
+			 seg_no);
+		break;
+	case CNSS_FW_RDDM:
+		snprintf(md_entry.name, sizeof(md_entry.name), "RDDM_%X",
+			 seg_no);
+		break;
+	case CNSS_FW_REMOTE_HEAP:
+		snprintf(md_entry.name, sizeof(md_entry.name), "RHEAP_%X",
+			 seg_no);
+		break;
+	default:
+		cnss_pr_err("Unknown dump type ID: %d\n", type);
+		return -EINVAL;
+	}
+
+	md_entry.phys_addr = pa;
+	md_entry.virt_addr = (uintptr_t)va;
+	md_entry.size = size;
+	md_entry.id = MSM_DUMP_DATA_CNSS_WLAN;
+
+	cnss_pr_dbg("Mini dump region: %s, va: %pK, pa: %pa, size: 0x%zx\n",
+		    md_entry.name, va, &pa, size);
+
+	ret = msm_minidump_add_region(&md_entry);
+	if (ret < 0)
+		cnss_pr_err("Failed to add mini dump region, err = %d\n", ret);
+
+	return ret;
+}
+
+static void cnss_pci_add_dump_seg(struct cnss_pci_data *pci_priv,
+				  struct cnss_dump_seg *dump_seg,
+				  enum cnss_fw_dump_type type, int seg_no,
+				  void *va, dma_addr_t dma, size_t size)
+{
+	struct cnss_plat_data *plat_priv = pci_priv->plat_priv;
+	struct device *dev = &pci_priv->pci_dev->dev;
+	phys_addr_t pa;
+
+	dump_seg->address = dma;
+	dump_seg->v_address = va;
+	dump_seg->size = size;
+	dump_seg->type = type;
+
+	cnss_pr_dbg("Seg: %x, va: %pK, dma: %pa, size: 0x%zx\n",
+		    seg_no, va, &dma, size);
+
+	if (cnss_va_to_pa(dev, size, va, dma, &pa, DMA_ATTR_FORCE_CONTIGUOUS)) {
+		cnss_pr_err("Failed to convert va to pa\n");
+		return;
+	}
+
+	cnss_minidump_add_region(plat_priv, type, seg_no, va, pa, size);
+}
+
+static void cnss_pci_remove_dump_seg(struct cnss_pci_data *pci_priv,
+				     struct cnss_dump_seg *dump_seg,
+				     enum cnss_fw_dump_type type, int seg_no,
+				     void *va, dma_addr_t dma, size_t size)
+{
+	struct cnss_plat_data *plat_priv = pci_priv->plat_priv;
+	struct device *dev = &pci_priv->pci_dev->dev;
+	phys_addr_t pa;
+
+	cnss_va_to_pa(dev, size, va, dma, &pa, DMA_ATTR_FORCE_CONTIGUOUS);
+	cnss_minidump_remove_region(plat_priv, type, seg_no, va, pa, size);
+}
+
 void cnss_pci_collect_dump_info(struct cnss_pci_data *pci_priv, bool in_panic)
 {
 	struct cnss_plat_data *plat_priv = pci_priv->plat_priv;
@@ -4034,7 +4105,8 @@ void cnss_pci_collect_dump_info(struct cnss_pci_data *pci_priv, bool in_panic)
 	struct image_info *fw_image, *rddm_image;
 	struct cnss_fw_mem *fw_mem = plat_priv->fw_mem;
 	struct cnss_fw_mem *qdss_mem = plat_priv->qdss_mem;
-	int ret, i;
+	struct md_region md_entry;
+	int ret, i, j;
 
 	if (test_bit(CNSS_MHI_RDDM_DONE, &pci_priv->mhi_state)) {
 		cnss_pr_dbg("RAM dump is already collected, skip\n");
@@ -4044,8 +4116,10 @@ void cnss_pci_collect_dump_info(struct cnss_pci_data *pci_priv, bool in_panic)
 	if (cnss_pci_check_link_status(pci_priv))
 		return;
 
+	cnss_pci_dump_shadow_reg(pci_priv);
 	plat_priv->target_assert_timestamp = ktime_to_ms(ktime_get());
 	cnss_pci_dump_qdss_reg(pci_priv);
+	cnss_pci_dump_bl_sram_mem(pci_priv);
 
 	ret = mhi_download_rddm_img(pci_priv->mhi_ctrl, in_panic);
 	if (ret) {
@@ -4063,13 +4137,10 @@ void cnss_pci_collect_dump_info(struct cnss_pci_data *pci_priv, bool in_panic)
 		    fw_image->entries);
 
 	for (i = 0; i < fw_image->entries; i++) {
-		dump_seg->address = fw_image->mhi_buf[i].dma_addr;
-		dump_seg->v_address = fw_image->mhi_buf[i].buf;
-		dump_seg->size = fw_image->mhi_buf[i].len;
-		dump_seg->type = CNSS_FW_IMAGE;
-		cnss_pr_dbg("seg-%d: address 0x%lx, v_address %pK, size 0x%lx\n",
-			    i, dump_seg->address,
-			    dump_seg->v_address, dump_seg->size);
+		cnss_pci_add_dump_seg(pci_priv, dump_seg, CNSS_FW_IMAGE, i,
+				      fw_image->mhi_buf[i].buf,
+				      fw_image->mhi_buf[i].dma_addr,
+				      fw_image->mhi_buf[i].len);
 		dump_seg++;
 	}
 
@@ -4079,32 +4150,31 @@ void cnss_pci_collect_dump_info(struct cnss_pci_data *pci_priv, bool in_panic)
 		    rddm_image->entries);
 
 	for (i = 0; i < rddm_image->entries; i++) {
-		dump_seg->address = rddm_image->mhi_buf[i].dma_addr;
-		dump_seg->v_address = rddm_image->mhi_buf[i].buf;
-		dump_seg->size = rddm_image->mhi_buf[i].len;
-		dump_seg->type = CNSS_FW_RDDM;
-		cnss_pr_dbg("seg-%d: address 0x%lx, v_address %pK, size 0x%lx\n",
-			    i, dump_seg->address,
-			    dump_seg->v_address, dump_seg->size);
+		cnss_pci_add_dump_seg(pci_priv, dump_seg, CNSS_FW_RDDM, i,
+				      rddm_image->mhi_buf[i].buf,
+				      rddm_image->mhi_buf[i].dma_addr,
+				      rddm_image->mhi_buf[i].len);
 		dump_seg++;
 	}
 
 	dump_data->nentries += rddm_image->entries;
 
+	mhi_dump_sfr(pci_priv->mhi_ctrl);
+
 	cnss_pr_dbg("Collect remote heap dump segment\n");
+	j = 0;
 	for (i = 0; i < plat_priv->fw_mem_seg_len; i++) {
-		if (fw_mem[i].type == CNSS_MEM_TYPE_DDR ||
-		    fw_mem[i].type == CNSS_MEM_M3) {
+		if (fw_mem[i].type == CNSS_MEM_TYPE_DDR) {
 			if (!fw_mem[i].pa)
 				continue;
-			dump_seg->address = fw_mem[i].pa;
-			dump_seg->v_address = fw_mem[i].va;
-			dump_seg->size = fw_mem[i].size;
-			dump_seg->type = CNSS_FW_REMOTE_HEAP;
-			cnss_pr_dbg("seg-%d: address 0x%lx, v_address %pK, size 0x%lx\n",
-				    i, dump_seg->address, dump_seg->v_address,
-				    dump_seg->size);
+
+			cnss_pci_add_dump_seg(pci_priv, dump_seg,
+					      CNSS_FW_REMOTE_HEAP, j,
+						  fw_mem[i].va, fw_mem[i].pa,
+						  fw_mem[i].size);
+
 			dump_seg++;
+			j++;
 			dump_data->nentries++;
 		}
 	}
@@ -4114,14 +4184,13 @@ void cnss_pci_collect_dump_info(struct cnss_pci_data *pci_priv, bool in_panic)
 		if (qdss_mem[i].type == CNSS_MEM_ETR) {
 			if (!qdss_mem[i].pa)
 				continue;
-			dump_seg->address = qdss_mem[i].pa;
-			dump_seg->v_address = qdss_mem[i].va;
-			dump_seg->size = qdss_mem[i].size;
-			dump_seg->type = CNSS_FW_REMOTE_HEAP;
-			cnss_pr_dbg("QDSS seg-%d: address 0x%lx, v_address %pK, size 0x%lx\n",
-				    i, dump_seg->address, dump_seg->v_address,
-				    dump_seg->size);
+
+			cnss_pci_add_dump_seg(pci_priv, dump_seg,
+							CNSS_FW_REMOTE_HEAP, j,
+							qdss_mem[i].va, qdss_mem[i].pa,
+							qdss_mem[i].size);
 			dump_seg++;
+			j++;
 			dump_data->nentries++;
 		}
 	}
@@ -4131,14 +4200,29 @@ void cnss_pci_collect_dump_info(struct cnss_pci_data *pci_priv, bool in_panic)
 		if (fw_mem[i].type == CNSS_MEM_CAL_V01) {
 			if (!fw_mem[i].pa)
 				continue;
-			dump_seg->address = fw_mem[i].pa;
-			dump_seg->v_address = fw_mem[i].va;
-			dump_seg->size = fw_mem[i].size;
-			dump_seg->type = CNSS_FW_REMOTE_HEAP;
-			cnss_pr_dbg("seg-%d: address 0x%lx, v_address %pK, size 0x%lx\n",
-				    i, dump_seg->address, dump_seg->v_address,
-				    dump_seg->size);
+
+			cnss_pci_add_dump_seg(pci_priv, dump_seg,
+							CNSS_FW_REMOTE_HEAP, j,
+							fw_mem[i].va, fw_mem[i].pa,
+							fw_mem[i].size);
 			dump_seg++;
+			j++;
+			dump_data->nentries++;
+		}
+	}
+
+	cnss_pr_dbg("Collect M3 dump segment\n");
+	for (i = 0; i < plat_priv->fw_mem_seg_len; i++) {
+		if (fw_mem[i].type == CNSS_MEM_M3) {
+			if (!fw_mem[i].pa)
+				continue;
+
+			cnss_pci_add_dump_seg(pci_priv, dump_seg,
+							CNSS_FW_REMOTE_HEAP, j,
+							fw_mem[i].va, fw_mem[i].pa,
+							fw_mem[i].size);
+			dump_seg++;
+			j++;
 			dump_data->nentries++;
 		}
 	}
@@ -4153,6 +4237,41 @@ void cnss_pci_collect_dump_info(struct cnss_pci_data *pci_priv, bool in_panic)
 void cnss_pci_clear_dump_info(struct cnss_pci_data *pci_priv)
 {
 	struct cnss_plat_data *plat_priv = pci_priv->plat_priv;
+	struct cnss_dump_seg *dump_seg =
+		plat_priv->ramdump_info_v2.dump_data_vaddr;
+	struct image_info *fw_image, *rddm_image;
+	struct cnss_fw_mem *fw_mem = plat_priv->fw_mem;
+	int i, j;
+
+	fw_image = pci_priv->mhi_ctrl->fbc_image;
+	rddm_image = pci_priv->mhi_ctrl->rddm_image;
+
+	for (i = 0; i < fw_image->entries; i++) {
+		cnss_pci_remove_dump_seg(pci_priv, dump_seg, CNSS_FW_IMAGE, i,
+					 fw_image->mhi_buf[i].buf,
+					 fw_image->mhi_buf[i].dma_addr,
+					 fw_image->mhi_buf[i].len);
+		dump_seg++;
+	}
+
+	for (i = 0; i < rddm_image->entries; i++) {
+		cnss_pci_remove_dump_seg(pci_priv, dump_seg, CNSS_FW_RDDM, i,
+					 rddm_image->mhi_buf[i].buf,
+					 rddm_image->mhi_buf[i].dma_addr,
+					 rddm_image->mhi_buf[i].len);
+		dump_seg++;
+	}
+
+	for (i = 0, j = 0; i < plat_priv->fw_mem_seg_len; i++) {
+		if (fw_mem[i].type == CNSS_MEM_TYPE_DDR) {
+			cnss_pci_remove_dump_seg(pci_priv, dump_seg,
+						 CNSS_FW_REMOTE_HEAP, j,
+						 fw_mem[i].va, fw_mem[i].pa,
+						 fw_mem[i].size);
+			dump_seg++;
+			j++;
+		}
+	}
 
 	plat_priv->ramdump_info_v2.dump_data.nentries = 0;
 	plat_priv->ramdump_info_v2.dump_data_valid = false;
@@ -4272,6 +4391,7 @@ static void cnss_mhi_notify_status(struct mhi_controller *mhi_ctrl, void *priv,
 		set_bit(CNSS_DEV_ERR_NOTIFY, &plat_priv->driver_state);
 		del_timer(&plat_priv->fw_boot_timer);
 		del_timer(&pci_priv->dev_rddm_timer);
+		cnss_pci_update_status(pci_priv, CNSS_FW_DOWN);
 		cnss_reason = CNSS_REASON_RDDM;
 		break;
 	default:

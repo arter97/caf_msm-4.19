@@ -14,6 +14,7 @@
 #include <soc/qcom/ramdump.h>
 #include <soc/qcom/subsystem_notif.h>
 #include <linux/major.h>
+#include <soc/qcom/minidump.h>
 
 #include "main.h"
 #include "debug.h"
@@ -1911,6 +1912,7 @@ static int cnss_do_recovery(struct cnss_plat_data *plat_priv,
 	if (!subsys_info->subsys_device)
 		return 0;
 
+	set_bit(CNSS_DRIVER_RECOVERY, &plat_priv->driver_state);
 	subsys_set_crash_status(subsys_info->subsys_device, true);
 	subsystem_restart_dev(subsys_info->subsys_device);
 
@@ -2888,12 +2890,8 @@ static int cnss_init_dump_entry(struct cnss_plat_data *plat_priv)
 	dump_entry.addr = virt_to_phys(&ramdump_info->dump_data);
 
 	EXIT;
-#ifdef NOMINIDUMP
 	return msm_dump_data_register_nominidump(MSM_DUMP_TABLE_APPS,
 						&dump_entry);
-#else
-	return 0;
-#endif
 }
 
 static int cnss_register_ramdump_v1(struct cnss_plat_data *plat_priv)
@@ -3009,12 +3007,8 @@ static int cnss_register_ramdump_v2(struct cnss_plat_data *plat_priv)
 	dump_entry.id = MSM_DUMP_DATA_CNSS_WLAN;
 	dump_entry.addr = virt_to_phys(dump_data);
 
-#ifdef NOMINIDUMP
 	ret = msm_dump_data_register_nominidump(MSM_DUMP_TABLE_APPS,
 						&dump_entry);
-#else
-	ret = 0;
-#endif
 	if (ret) {
 		cnss_pr_err("Failed to setup dump table, err = %d\n", ret);
 		goto free_ramdump;
@@ -3070,6 +3064,63 @@ static void cnss_unregister_ramdump_v2(struct cnss_plat_data *plat_priv)
 	 * info_v2->dump_data_vaddr = NULL;
 	 * info_v2->dump_data_valid = false;
 	 */
+}
+
+int cnss_minidump_remove_region(struct cnss_plat_data *plat_priv,
+				enum cnss_fw_dump_type type, int seg_no,
+				void *va, phys_addr_t pa, size_t size)
+{
+	struct md_region md_entry;
+	int ret;
+
+	switch (type) {
+	case CNSS_FW_IMAGE:
+		snprintf(md_entry.name, sizeof(md_entry.name), "FBC_%X",
+			 seg_no);
+		break;
+	case CNSS_FW_RDDM:
+		snprintf(md_entry.name, sizeof(md_entry.name), "RDDM_%X",
+			 seg_no);
+		break;
+	case CNSS_FW_REMOTE_HEAP:
+		snprintf(md_entry.name, sizeof(md_entry.name), "RHEAP_%X",
+			 seg_no);
+		break;
+	default:
+		cnss_pr_err("Unknown dump type ID: %d\n", type);
+		return -EINVAL;
+	}
+
+	md_entry.phys_addr = pa;
+	md_entry.virt_addr = (uintptr_t)va;
+	md_entry.size = size;
+	md_entry.id = MSM_DUMP_DATA_CNSS_WLAN;
+
+	cnss_pr_dbg("Remove mini dump region: %s, va: %pK, pa: %pa, size: 0x%zx\n",
+		    md_entry.name, va, &pa, size);
+
+	ret = msm_minidump_remove_region(&md_entry);
+	if (ret)
+		cnss_pr_err("Failed to remove mini dump region, err = %d\n",
+			    ret);
+
+	return ret;
+}
+
+int cnss_va_to_pa(struct device *dev, size_t size, void *va, dma_addr_t dma,
+		  phys_addr_t *pa, unsigned long attrs)
+{
+	struct sg_table sgt;
+	int ret;
+
+	ret = dma_get_sgtable_attrs(dev, &sgt, va, dma, size, attrs);
+	if (ret)
+		return -EINVAL;
+
+	*pa = page_to_phys(sg_page(sgt.sgl));
+	sg_free_table(&sgt);
+
+	return 0;
 }
 
 int cnss_register_ramdump(struct cnss_plat_data *plat_priv)
