@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * Copyright (c) 2019-2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2019-2021, The Linux Foundation. All rights reserved.
  */
 
 #ifndef __MSM_CAMERA_H
@@ -71,5 +71,10 @@
 #define CAM_CPAS_ISP_FUSE_ID                2
 #define CAM_CPAS_ISP_PIX_FUSE_ID            3
 #define CAM_CPAS_FUSE_FEATURE_MAX           4
+
+/* Flash type*/
+#define CAM_FLASH_TYPE_GPIO 0
+#define CAM_FLASH_TYPE_I2C  1
+#define CAM_FLASH_TYPE_PMIC 2
 
 #endif
