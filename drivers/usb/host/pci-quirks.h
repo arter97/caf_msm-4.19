@@ -17,6 +17,11 @@ void usb_enable_intel_xhci_ports(struct pci_dev *xhci_pdev);
 void usb_disable_xhci_ports(struct pci_dev *xhci_pdev);
 void sb800_prefetch(struct device *dev, int on);
 bool usb_amd_pt_check_port(struct device *device, int port);
+#ifdef CONFIG_USB_UPD720X
+void upd720x_finish_download(struct pci_dev *pDev);
+#else
+#define upd720x_finish_download(pDev)
+#endif
 #else
 struct pci_dev;
 static inline void usb_amd_quirk_pll_disable(void) {}
