@@ -636,6 +636,7 @@ struct msm_pcie_dev_t {
 	struct platform_device *pdev;
 	struct pci_dev *dev;
 	struct regulator *gdsc;
+	struct regulator *vreg_pcie_vbus;
 	struct msm_pcie_vreg_info_t vreg[MSM_PCIE_MAX_VREG];
 	struct msm_pcie_gpio_info_t gpio[MSM_PCIE_MAX_GPIO];
 	struct msm_pcie_clk_info_t clk[MSM_PCIE_MAX_CLK];
@@ -3688,6 +3689,19 @@ static int msm_pcie_get_vreg(struct msm_pcie_dev_t *pcie_dev)
 		}
 	}
 
+	pcie_dev->vreg_pcie_vbus = devm_regulator_get(&pdev->dev,
+						"vreg-pcievbus");
+
+        if (IS_ERR(pcie_dev->vreg_pcie_vbus)) {
+                PCIE_ERR(pcie_dev, "PCIe: RC%d Failed %sVREG_PCIE:%ld\n",
+                        pcie_dev->rc_idx, pcie_dev->pdev->name,
+                        PTR_ERR(pcie_dev->gdsc));
+		if (PTR_ERR(pcie_dev->vreg_pcie_vbus) == -EPROBE_DEFER)
+                        PCIE_DBG(pcie_dev, "PCIe: EPROBE_DEFER for%s vbus\n",
+                                pcie_dev->pdev->name);
+		return PTR_ERR(pcie_dev->vreg_pcie_vbus);
+	}
+
 	pcie_dev->gdsc = devm_regulator_get(&pdev->dev, "gdsc-vdd");
 
 	if (IS_ERR(pcie_dev->gdsc)) {
@@ -4638,6 +4652,17 @@ int msm_pcie_enumerate(u32 rc_idx)
 		PCIE_ERR(dev, "PCIe: RC%d: has already been enumerated.\n",
 			dev->rc_idx);
 		goto out;
+	}
+
+	/*Open the PCIE VCC before enable the pcie */
+	if (dev->vreg_pcie_vbus) {
+		ret = regulator_enable(dev->vreg_pcie_vbus);
+		if (ret) {
+			PCIE_ERR(dev,
+			"PCIe: fail to open vcc for RC%d (%s)\n",
+			dev->rc_idx, dev->pdev->name);
+			return ret;
+		}
 	}
 
 	ret = msm_pcie_enable(dev);
@@ -6066,6 +6091,14 @@ static int msm_pcie_remove(struct platform_device *pdev)
 	msm_pcie_clk_deinit(&msm_pcie_dev[rc_idx]);
 	msm_pcie_gpio_deinit(&msm_pcie_dev[rc_idx]);
 	msm_pcie_release_resources(&msm_pcie_dev[rc_idx]);
+
+	/*Close the PCIE VCC  when remove the pcie*/
+	if (msm_pcie_dev[rc_idx].vreg_pcie_vbus) {
+		ret = regulator_disable(msm_pcie_dev[rc_idx].vreg_pcie_vbus);
+
+		if (ret)
+			pr_err("%s: PCIe: fail to close VCC.\n", __func__);
+	}
 
 out:
 	mutex_unlock(&pcie_drv.drv_lock);
