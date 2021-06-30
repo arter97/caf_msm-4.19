@@ -321,6 +321,7 @@ enum msm_pcie_irq_event {
 enum msm_pcie_gpio {
 	MSM_PCIE_GPIO_PERST,
 	MSM_PCIE_GPIO_WAKE,
+	MSM_PCIE_GPIO_PONRST,
 	MSM_PCIE_GPIO_EP,
 	MSM_PCIE_MAX_GPIO
 };
@@ -705,6 +706,8 @@ struct msm_pcie_dev_t {
 	uint32_t target_link_speed;
 	uint32_t n_fts;
 	uint32_t ep_latency;
+	uint32_t ponrst_delay_min;
+	uint32_t ponrst_delay_max;
 	uint32_t switch_latency;
 	uint32_t wr_halt_size;
 	uint32_t slv_addr_space_size;
@@ -864,6 +867,7 @@ static struct msm_pcie_vreg_info_t msm_pcie_vreg_info[MSM_PCIE_MAX_VREG] = {
 static struct msm_pcie_gpio_info_t msm_pcie_gpio_info[MSM_PCIE_MAX_GPIO] = {
 	{"perst-gpio", 0, 1, 0, 0, 1},
 	{"wake-gpio", 0, 0, 0, 0, 0},
+	{"qcom,ponrst", 0, 1, 0, 0, 0},
 	{"qcom,ep-gpio", 0, 1, 1, 0, 0}
 };
 
@@ -4279,6 +4283,16 @@ static int msm_pcie_enable(struct msm_pcie_dev_t *dev)
 	if (dev->gpio[MSM_PCIE_GPIO_EP].num)
 		gpio_set_value(dev->gpio[MSM_PCIE_GPIO_EP].num,
 				dev->gpio[MSM_PCIE_GPIO_EP].on);
+printk("jion delay max = %d min = %d\n",dev->ponrst_delay_max,dev->ponrst_delay_min);
+	/* Enable device reset pin of ponrst */
+	if (dev->gpio[MSM_PCIE_GPIO_PONRST].num) {
+		gpio_set_value(dev->gpio[MSM_PCIE_GPIO_PONRST].num,
+				dev->gpio[MSM_PCIE_GPIO_PONRST].on);
+		usleep_range(dev->ponrst_delay_min, dev->ponrst_delay_max);
+		gpio_set_value(dev->gpio[MSM_PCIE_GPIO_PONRST].num,
+				1 - dev->gpio[MSM_PCIE_GPIO_PONRST].on);
+		usleep_range(dev->ponrst_delay_min, dev->ponrst_delay_max);
+	}
 
 	/* de-assert PCIe reset link to bring EP out of reset */
 
@@ -4385,6 +4399,10 @@ static void msm_pcie_disable(struct msm_pcie_dev_t *dev)
 
 	gpio_set_value(dev->gpio[MSM_PCIE_GPIO_PERST].num,
 				dev->gpio[MSM_PCIE_GPIO_PERST].on);
+
+	if (dev->gpio[MSM_PCIE_GPIO_PONRST].num)
+		gpio_set_value(dev->gpio[MSM_PCIE_GPIO_PONRST].num,
+				dev->gpio[MSM_PCIE_GPIO_PONRST].on);
 
 	if (dev->phy_power_down_offset)
 		msm_pcie_write_reg(dev->phy, dev->phy_power_down_offset, 0);
@@ -5099,6 +5117,10 @@ static irqreturn_t handle_linkdown_irq(int irq, void *data)
 		if (!(msm_pcie_keep_resources_on & BIT(dev->rc_idx)))
 			gpio_set_value(dev->gpio[MSM_PCIE_GPIO_PERST].num,
 					dev->gpio[MSM_PCIE_GPIO_PERST].on);
+
+		if (dev->gpio[MSM_PCIE_GPIO_PONRST].num)
+			gpio_set_value(dev->gpio[MSM_PCIE_GPIO_PONRST].num,
+					dev->gpio[MSM_PCIE_GPIO_PONRST].on);
 
 		PCIE_ERR(dev, "PCIe link is down for RC%d\n", dev->rc_idx);
 
@@ -5868,6 +5890,16 @@ static int msm_pcie_probe(struct platform_device *pdev)
 	PCIE_DBG(pcie_dev, "RC%d: ep-latency: %ums.\n", pcie_dev->rc_idx,
 		pcie_dev->ep_latency);
 
+	of_property_read_u32(of_node, "qcom,ponrst-delay-us-min",
+				&pcie_dev->ponrst_delay_min);
+	PCIE_DBG(pcie_dev, "RC%d: ponrst-delay-min: %ums.\n", pcie_dev->rc_idx,
+				pcie_dev->ponrst_delay_min);
+printk("jion ponrst-delay-min= %d  ", pcie_dev->ponrst_delay_min);
+	of_property_read_u32(of_node, "qcom,ponrst-delay-us-max",
+				&pcie_dev->ponrst_delay_max);
+	PCIE_DBG(pcie_dev, "RC%d: ponrst-delay-max: %ums.\n", pcie_dev->rc_idx,
+				pcie_dev->ponrst_delay_max);
+printk("jion ponrst-delay-max= %d  ", pcie_dev->ponrst_delay_max);
 	of_property_read_u32(of_node, "qcom,switch-latency",
 				&pcie_dev->switch_latency);
 	PCIE_DBG(pcie_dev, "RC%d: switch-latency: %ums.\n", pcie_dev->rc_idx,
