@@ -1380,6 +1380,8 @@ static int parse_ev_cfg(struct mhi_controller *mhi_cntrl,
 	if (!mhi_cntrl->mhi_event)
 		return -ENOMEM;
 
+	INIT_LIST_HEAD(&mhi_cntrl->sp_ev_rings);
+
 	/* populate ev ring */
 	mhi_event = mhi_cntrl->mhi_event;
 	for (i = 0; i < num; ++i) {
