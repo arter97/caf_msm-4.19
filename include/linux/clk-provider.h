@@ -271,6 +271,7 @@ struct clk_ops {
 	long		(*list_rate)(struct clk_hw *hw, unsigned int n,
 							unsigned long rate_max);
 	void		(*bus_vote)(struct clk_hw *hw, bool enable);
+	void		(*set_hw_status)(struct clk_hw *hw, bool changed);
 };
 
 /**

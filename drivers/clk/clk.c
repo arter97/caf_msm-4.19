@@ -107,6 +107,7 @@ struct clk_core {
 	struct list_head	rate_change_node;
 	unsigned long		*rate_max;
 	int			num_rate_max;
+	bool			rate_no_change;
 };
 
 #define CREATE_TRACE_POINTS
@@ -1058,6 +1059,11 @@ static int clk_core_prepare(struct clk_core *core)
 			core->vdd_class_vote
 				= clk_find_vdd_level(core, core->rate);
 			core->new_vdd_class_vote = core->vdd_class_vote;
+		}
+
+		if (core->ops->set_hw_status) {
+			core->ops->set_hw_status(core->hw, core->rate_no_change);
+			core->rate_no_change = false;
 		}
 
 		if (core->ops->prepare)
@@ -2069,6 +2075,10 @@ static struct clk_core *clk_calc_new_rates(struct clk_core *core,
 		best_parent_rate = req.best_parent_rate;
 		new_rate = req.rate;
 		parent = req.best_parent_hw ? req.best_parent_hw->core : NULL;
+
+		if (parent->rate == new_rate) {
+			parent->rate_no_change = true;
+		}
 
 		if (new_rate < min_rate || new_rate > max_rate)
 			return NULL;
