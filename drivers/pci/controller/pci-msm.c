@@ -682,6 +682,7 @@ struct msm_pcie_dev_t {
 	enum msm_pcie_link_status link_status;
 	bool user_suspend;
 	bool disable_pc;
+	bool disable_pm;
 	struct pci_saved_state *saved_state;
 
 	struct wakeup_source ws;
@@ -4283,11 +4284,10 @@ static int msm_pcie_enable(struct msm_pcie_dev_t *dev)
 	if (dev->gpio[MSM_PCIE_GPIO_EP].num)
 		gpio_set_value(dev->gpio[MSM_PCIE_GPIO_EP].num,
 				dev->gpio[MSM_PCIE_GPIO_EP].on);
-printk("jion delay max = %d min = %d\n",dev->ponrst_delay_max,dev->ponrst_delay_min);
 	/* Enable device reset pin of ponrst */
 	if (dev->gpio[MSM_PCIE_GPIO_PONRST].num) {
 		gpio_set_value(dev->gpio[MSM_PCIE_GPIO_PONRST].num,
-				dev->gpio[MSM_PCIE_GPIO_PONRST].on);
+			dev->gpio[MSM_PCIE_GPIO_PONRST].on);
 		usleep_range(dev->ponrst_delay_min, dev->ponrst_delay_max);
 		gpio_set_value(dev->gpio[MSM_PCIE_GPIO_PONRST].num,
 				1 - dev->gpio[MSM_PCIE_GPIO_PONRST].on);
@@ -4720,7 +4720,7 @@ int msm_pcie_enumerate(u32 rc_idx)
 		goto out;
 	}
 
-	if (IS_ENABLED(CONFIG_PCI_MSM_MSI)) {
+	if (IS_ENABLED(CONFIG_PCI_MSM_MSI) && !dev->disable_pm) {
 		ret = msm_msi_init(&dev->pdev->dev);
 		if (ret)
 			goto out;
@@ -5894,12 +5894,12 @@ static int msm_pcie_probe(struct platform_device *pdev)
 				&pcie_dev->ponrst_delay_min);
 	PCIE_DBG(pcie_dev, "RC%d: ponrst-delay-min: %ums.\n", pcie_dev->rc_idx,
 				pcie_dev->ponrst_delay_min);
-printk("jion ponrst-delay-min= %d  ", pcie_dev->ponrst_delay_min);
 	of_property_read_u32(of_node, "qcom,ponrst-delay-us-max",
 				&pcie_dev->ponrst_delay_max);
 	PCIE_DBG(pcie_dev, "RC%d: ponrst-delay-max: %ums.\n", pcie_dev->rc_idx,
 				pcie_dev->ponrst_delay_max);
-printk("jion ponrst-delay-max= %d  ", pcie_dev->ponrst_delay_max);
+	pcie_dev->disable_pm = of_property_read_bool(of_node, "qcom,disable-suspend");
+
 	of_property_read_u32(of_node, "qcom,switch-latency",
 				&pcie_dev->switch_latency);
 	PCIE_DBG(pcie_dev, "RC%d: switch-latency: %ums.\n", pcie_dev->rc_idx,
@@ -6808,6 +6808,8 @@ static int msm_pcie_pm_suspend(struct pci_dev *dev,
 
 	PCIE_DBG(pcie_dev, "RC%d: entry\n", pcie_dev->rc_idx);
 
+	if(pcie_dev->disable_pm)
+		return ret;
 	spin_lock_irqsave(&pcie_dev->irq_lock, irqsave_flags);
 	pcie_dev->suspending = true;
 	spin_unlock_irqrestore(&pcie_dev->irq_lock, irqsave_flags);
