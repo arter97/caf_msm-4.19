@@ -834,6 +834,7 @@ static u32 base_sel;
 static u32 wr_offset;
 static u32 wr_mask;
 static u32 wr_value;
+static u32 pm_value;
 static u32 corr_counter_limit = 5;
 
 /* CRC8 table for BDF to SID translation */
@@ -2219,6 +2220,7 @@ static struct dentry *dfile_linkdown_panic;
 static struct dentry *dfile_wr_offset;
 static struct dentry *dfile_wr_mask;
 static struct dentry *dfile_wr_value;
+static struct dentry *dfile_pm_value;
 static struct dentry *dfile_boot_option;
 static struct dentry *dfile_aer_enable;
 static struct dentry *dfile_corr_counter_limit;
@@ -2447,6 +2449,30 @@ static const struct file_operations msm_pcie_debugfs_wr_value_ops = {
 	.write = msm_pcie_debugfs_wr_value,
 };
 
+static ssize_t msm_pcie_debugfs_pm_value(struct file *file,
+                                const char __user *buf,
+                                size_t count, loff_t *ppos)
+{
+        int ret;
+
+        pm_value = 0;
+
+        ret = msm_pcie_debugfs_parse_input(buf, count, &pm_value);
+        if (ret)
+                return ret;
+
+        pr_alert("PCIe: pm_value is now 0x%x\n", pm_value);
+	if (pm_value)
+		msm_pcie_dev[2].disable_pm = true;
+	else
+		msm_pcie_dev[2].disable_pm = false;
+        return count;
+}
+
+static const struct file_operations msm_pcie_debugfs_pm_value_ops = {
+        .write = msm_pcie_debugfs_pm_value,
+};
+
 static ssize_t msm_pcie_debugfs_boot_option(struct file *file,
 				const char __user *buf,
 				size_t count, loff_t *ppos)
@@ -2606,6 +2632,14 @@ static void msm_pcie_debugfs_init(void)
 		goto wr_value_error;
 	}
 
+	dfile_pm_value = debugfs_create_file("pm_value", 0664,
+                                        dent_msm_pcie, NULL,
+                                        &msm_pcie_debugfs_pm_value_ops);
+        if (!dfile_pm_value || IS_ERR(dfile_pm_value)) {
+                pr_err("PCIe: fail to create the file for debug_fs pm_value.\n");
+                goto pm_value_error;
+        }
+
 	dfile_boot_option = debugfs_create_file("boot_option", 0664,
 					dent_msm_pcie, NULL,
 					&msm_pcie_debugfs_boot_option_ops);
@@ -2639,6 +2673,8 @@ boot_option_error:
 	debugfs_remove(dfile_wr_value);
 wr_value_error:
 	debugfs_remove(dfile_wr_mask);
+pm_value_error:
+	debugfs_remove(dfile_pm_value);
 wr_mask_error:
 	debugfs_remove(dfile_wr_offset);
 wr_offset_error:
@@ -2662,6 +2698,7 @@ static void msm_pcie_debugfs_exit(void)
 	debugfs_remove(dfile_wr_offset);
 	debugfs_remove(dfile_wr_mask);
 	debugfs_remove(dfile_wr_value);
+	debugfs_remove(dfile_pm_value);
 	debugfs_remove(dfile_boot_option);
 	debugfs_remove(dfile_aer_enable);
 	debugfs_remove(dfile_corr_counter_limit);
