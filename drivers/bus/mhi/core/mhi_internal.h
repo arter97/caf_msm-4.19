@@ -414,11 +414,6 @@ enum MHI_CH_STATE {
 	MHI_CH_STATE_ERROR = 0x5,
 };
 
-enum MHI_BRSTMODE {
-	MHI_BRSTMODE_DISABLE = 0x2,
-	MHI_BRSTMODE_ENABLE = 0x3,
-};
-
 #define MHI_INVALID_BRSTMODE(mode) (mode != MHI_BRSTMODE_DISABLE && \
 				    mode != MHI_BRSTMODE_ENABLE)
 
@@ -511,16 +506,6 @@ enum MHI_PM_STATE {
 #define MHI_PM_IN_SUSPEND_STATE(pm_state) (pm_state & \
 					   (MHI_PM_M3_ENTER | MHI_PM_M3))
 
-/* accepted buffer type for the channel */
-enum MHI_XFER_TYPE {
-	MHI_XFER_BUFFER,
-	MHI_XFER_SKB,
-	MHI_XFER_SCLIST,
-	MHI_XFER_NOP, /* CPU offload channel, host does not accept transfer */
-	MHI_XFER_DMA, /* receive dma address, already mapped by client */
-	MHI_XFER_RSC_DMA, /* RSC type, accept premapped buffer */
-};
-
 #define NR_OF_CMD_RINGS (1)
 #define CMD_EL_PER_RING (128)
 #define PRIMARY_CMD_RING (0)
@@ -555,14 +540,6 @@ enum mhi_er_priority {
 
 #define IS_MHI_ER_PRIORITY_SPECIAL(ev) (ev->priority >= MHI_ER_PRIORITY_SPECIAL)
 #define IS_MHI_ER_PRIORITY_HIGH(ev) (ev->priority == MHI_ER_PRIORITY_HIGH)
-
-enum mhi_er_data_type {
-	MHI_ER_DATA_ELEMENT_TYPE,
-	MHI_ER_CTRL_ELEMENT_TYPE,
-	MHI_ER_TSYNC_ELEMENT_TYPE,
-	MHI_ER_BW_SCALE_ELEMENT_TYPE,
-	MHI_ER_DATA_TYPE_MAX = MHI_ER_BW_SCALE_ELEMENT_TYPE,
-};
 
 enum mhi_ch_ee_mask {
 	MHI_CH_EE_PBL = BIT(MHI_EE_PBL),
@@ -684,7 +661,7 @@ struct mhi_chan {
 	enum mhi_ch_type type;
 	enum dma_data_direction dir;
 	struct db_cfg db_cfg;
-	u32 ee_mask;
+	enum mhi_ee ee;
 	enum MHI_XFER_TYPE xfer_type;
 	enum MHI_CH_STATE ch_state;
 	enum MHI_EV_CCS ccs;
