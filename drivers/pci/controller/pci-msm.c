@@ -263,6 +263,8 @@
 	} while (0)
 
 
+#define GPIO_AIC100_EN "aic100-en-gpio"
+
 enum msm_pcie_res {
 	MSM_PCIE_RES_PARF,
 	MSM_PCIE_RES_PHY,
@@ -2993,6 +2995,44 @@ static struct pci_ops msm_pcie_ops = {
 	.write = msm_pcie_wr_conf,
 };
 
+int enable_aic100(struct msm_pcie_dev_t *dev) {
+	int rc;
+	int aic100_en_gpio;
+	if(!dev)
+		return -EINVAL;
+
+	rc = of_property_read_bool(dev->pdev->dev.of_node, GPIO_AIC100_EN);
+	if (rc == 0) {
+		PCIE_DBG(dev, "PCIe: RC%d couldn't find named gpio %s, skip\n",
+				dev->rc_idx, GPIO_AIC100_EN);
+		return 0;
+	}
+
+	rc = of_get_named_gpio(dev->pdev->dev.of_node,
+					GPIO_AIC100_EN, 0);
+	if (rc < 0) {
+		PCIE_ERR(dev, "PCIe: RC%d can't get named gpio %s\n",
+				 dev->rc_idx, GPIO_AIC100_EN);
+		return rc;
+	}
+	aic100_en_gpio = rc;
+
+	rc = gpio_request(aic100_en_gpio, GPIO_AIC100_EN);
+	if (rc) {
+		PCIE_ERR(dev, "PCIe: RC%d can't request gpio %s(num %d)\n",
+				dev->rc_idx, GPIO_AIC100_EN, aic100_en_gpio);
+		return rc;
+	}
+	rc = gpio_direction_output(aic100_en_gpio, 1);
+	if (rc) {
+		gpio_free(aic100_en_gpio);
+		PCIE_ERR(dev, "PCIe: RC%d can't set gpio %s(num %d)\n",
+			dev->rc_idx, GPIO_AIC100_EN, aic100_en_gpio);
+		return rc;
+	}
+	return 0;
+}
+
 static int msm_pcie_gpio_init(struct msm_pcie_dev_t *dev)
 {
 	int rc = 0, i;
@@ -3025,6 +3065,8 @@ static int msm_pcie_gpio_init(struct msm_pcie_dev_t *dev)
 			break;
 		}
 	}
+	if (!rc)
+		enable_aic100(dev);
 
 	if (rc)
 		while (i--)
