@@ -395,6 +395,9 @@ struct mhi_controller_config {
  * @lpm_disable: Request controller to disable link level low power modes
  * @lpm_enable: Controller may enable link level low power modes again
  * @priv_data: Points to bus master's private data
+ * @has_soc_reset: indicates if this controller has a SoC reset register
+ * @soc_reset_offset: offset from MHI base to the SoC reset register
+ * @soc_reset_val: value to write to the SoC reset register
  */
 struct mhi_controller {
 	struct list_head node;
@@ -564,6 +567,10 @@ struct mhi_controller {
 	struct reg_write_info *reg_write_q;
 	atomic_t write_idx;
 	u32 read_idx;
+	/* mhi_soc_reset support */
+	bool has_soc_reset;
+	u32 soc_reset_offset;
+	u32 soc_reset_val;
 };
 
 /**
@@ -1155,5 +1162,16 @@ char *mhi_get_restart_reason(const char *name);
 } while (0)
 
 #endif
+/*
+ * mhi_do_soc_reset - Issue SoC Reset to the external device.
+ * @mhi_cntrl: MHI controller
+ */
+void mhi_do_soc_reset(struct mhi_controller *mhi_cntrl);
+
+/**
+ * mhi_get_exec_env - Get BHI execution environment of the device
+ * @mhi_cntrl: MHI controller
+ */
+enum mhi_ee mhi_get_exec_env(struct mhi_controller *mhi_cntrl);
 
 #endif /* _MHI_H_ */

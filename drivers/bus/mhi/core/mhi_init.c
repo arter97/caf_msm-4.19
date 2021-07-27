@@ -23,6 +23,47 @@ const char * const mhi_log_level_str[MHI_MSG_LVL_MAX] = {
 	[MHI_MSG_LVL_MASK_ALL] = "Mask all",
 };
 
+void mhi_do_soc_reset(struct mhi_controller *mhi_cntrl)
+{
+	if (mhi_cntrl && mhi_cntrl->has_soc_reset)
+		mhi_perform_soc_reset(mhi_cntrl);
+}
+EXPORT_SYMBOL(mhi_do_soc_reset);
+
+static struct dentry *root_dentry;
+
+static ssize_t soc_reset_store(struct device *dev,
+			       struct device_attribute *attr,
+			       const char *buf, size_t count)
+{
+	struct mhi_device *mhi_dev = container_of(dev, struct mhi_device, dev);
+	struct mhi_controller *mhi_cntrl = mhi_dev->mhi_cntrl;
+	unsigned long value;
+	int rc;
+
+	rc = kstrtoul(buf, 0, &value);
+
+	if (rc) {
+		count = -EINVAL;
+		goto out;
+	}
+
+	mhi_do_soc_reset(mhi_cntrl);
+
+out:
+	return count;
+}
+
+DEVICE_ATTR_WO(soc_reset);
+
+static struct attribute *reset_attrs[] = {
+	&dev_attr_soc_reset.attr,
+	NULL,
+};
+
+static struct attribute_group cntrl_soc_reset_group = {
+	.attrs = reset_attrs,
+};
 const char * const mhi_ee_str[MHI_EE_MAX] = {
 	[MHI_EE_PBL] = "PBL",
 	[MHI_EE_SBL] = "SBL",
@@ -423,7 +464,7 @@ int mhi_init_irq_setup(struct mhi_controller *mhi_cntrl)
 	/* for BHI INTVEC msi */
 	ret = request_threaded_irq(mhi_cntrl->irq[0], mhi_intvec_handlr,
 				   mhi_intvec_threaded_handlr,
-				   IRQF_ONESHOT | IRQF_NO_SUSPEND,
+				   IRQF_SHARED | IRQF_NO_SUSPEND,
 				   "mhi", mhi_cntrl);
 	if (ret)
 		return ret;
@@ -568,6 +609,84 @@ DEFINE_DEBUGFS_ATTRIBUTE(debugfs_trigger_reset_fops, NULL,
 DEFINE_DEBUGFS_ATTRIBUTE(debugfs_trigger_soc_reset_fops, NULL,
 			 mhi_debugfs_trigger_soc_reset, "%llu\n");
 
+static int bhi_show(struct seq_file *s, void *offset)
+{
+	struct mhi_controller *mhi_cntrl = s->private;
+	u32 val;
+	int ret;
+
+	ret = mhi_read_reg(mhi_cntrl, mhi_cntrl->regs, BHIOFF, &val);
+        if (ret)
+		return 0;
+	seq_printf(s, "BHIOFF 0x%x\n", val);
+
+	ret = mhi_read_reg(mhi_cntrl, mhi_cntrl->bhi, BHI_BHIVERSION_MINOR, &val);
+        if (ret)
+		return 0;
+	seq_printf(s, "BHIVERSION_MINOR 0x%x\n", val);
+
+	ret = mhi_read_reg(mhi_cntrl, mhi_cntrl->bhi, BHI_BHIVERSION_MAJOR, &val);
+        if (ret)
+		return 0;
+	seq_printf(s, "BHIVERSION_MAJOR 0x%x\n", val);
+
+	ret = mhi_read_reg(mhi_cntrl, mhi_cntrl->bhi, BHI_IMGADDR_LOW, &val);
+        if (ret)
+		return 0;
+	seq_printf(s, "IMGADDR_LOW 0x%x\n", val);
+
+	ret = mhi_read_reg(mhi_cntrl, mhi_cntrl->bhi, BHI_IMGADDR_HIGH, &val);
+        if (ret)
+		return 0;
+	seq_printf(s, "IMGADDR_HIGH 0x%x\n", val);
+
+	ret = mhi_read_reg(mhi_cntrl, mhi_cntrl->bhi, BHI_IMGSIZE, &val);
+        if (ret)
+		return 0;
+	seq_printf(s, "IMGSIZE 0x%x\n", val);
+
+	ret = mhi_read_reg(mhi_cntrl, mhi_cntrl->bhi, BHI_IMGTXDB, &val);
+        if (ret)
+		return 0;
+	seq_printf(s, "IMGTXDB 0x%x\n", val);
+
+	ret = mhi_read_reg(mhi_cntrl, mhi_cntrl->bhi, BHI_INTVEC, &val);
+        if (ret)
+		return 0;
+	seq_printf(s, "INTVEC 0x%x\n", val);
+
+	ret = mhi_read_reg(mhi_cntrl, mhi_cntrl->bhi, BHI_EXECENV, &val);
+        if (ret)
+		return 0;
+	seq_printf(s, "EXECENV 0x%x\n", val);
+
+	ret = mhi_read_reg(mhi_cntrl, mhi_cntrl->bhi, BHI_STATUS, &val);
+        if (ret)
+		return 0;
+	seq_printf(s, "STATUS 0x%x\n", val);
+
+	return 0;
+}
+
+static int bhi_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, bhi_show, inode->i_private);
+}
+
+static const struct file_operations bhi_fops = {
+	.owner = THIS_MODULE,
+	.open = bhi_open,
+	.read = seq_read,
+	.llseek = seq_lseek,
+	.release = single_release,
+};
+
+void mhi_init_debugfs_bhi(struct mhi_controller *mhi_cntrl)
+{
+	debugfs_create_file("dump_bhi", S_IFREG | S_IRUGO, mhi_cntrl->dentry,
+			    mhi_cntrl, &bhi_fops);
+}
+
 void mhi_init_debugfs(struct mhi_controller *mhi_cntrl)
 {
 	struct dentry *dentry;
@@ -600,6 +719,8 @@ void mhi_init_debugfs(struct mhi_controller *mhi_cntrl)
 				   &debugfs_trigger_soc_reset_fops);
 
 	mhi_cntrl->dentry = dentry;
+
+	mhi_init_debugfs_bhi(mhi_cntrl);
 }
 
 void mhi_deinit_debugfs(struct mhi_controller *mhi_cntrl)
@@ -1046,6 +1167,9 @@ void mhi_deinit_chan_ctxt(struct mhi_controller *mhi_cntrl,
 	tre_ring = &mhi_chan->tre_ring;
 	chan_ctxt = &mhi_cntrl->mhi_ctxt->chan_ctxt[mhi_chan->chan];
 
+	if (chan_ctxt->rbase == 0)
+		return;
+
 	mhi_free_coherent(mhi_cntrl, tre_ring->alloc_size,
 			  tre_ring->pre_aligned, tre_ring->dma_handle);
 	vfree(buf_ring->base);
@@ -1258,6 +1382,8 @@ static int parse_ev_cfg(struct mhi_controller *mhi_cntrl,
 				       GFP_KERNEL);
 	if (!mhi_cntrl->mhi_event)
 		return -ENOMEM;
+
+	INIT_LIST_HEAD(&mhi_cntrl->sp_ev_rings);
 
 	/* populate ev ring */
 	mhi_event = mhi_cntrl->mhi_event;
@@ -1836,6 +1962,12 @@ int register_mhi_controller(struct mhi_controller *mhi_cntrl,
 	if (ret)
 		goto error_add_dev;
 
+	if (mhi_cntrl->has_soc_reset) {
+		ret = device_add_group(&mhi_dev->dev, &cntrl_soc_reset_group);
+		if (ret)
+			goto error_add_reset;
+	}
+
 	mhi_cntrl->mhi_dev = mhi_dev;
 
 	if (mhi_cntrl->sfr_len) {
@@ -1855,7 +1987,7 @@ int register_mhi_controller(struct mhi_controller *mhi_cntrl,
 		mhi_cntrl->mhi_sfr = sfr_info;
 	}
 
-	mhi_cntrl->parent = debugfs_lookup(mhi_bus_type.name, NULL);
+	mhi_cntrl->parent = root_dentry;
 	mhi_cntrl->klog_lvl = MHI_MSG_LVL_ERROR;
 
 	/* adding it to this list only for debug purpose */
@@ -1867,6 +1999,8 @@ int register_mhi_controller(struct mhi_controller *mhi_cntrl,
 
 error_alloc_sfr:
 	kfree(sfr_info);
+error_add_reset:
+	device_del(&mhi_dev->dev);
 
 error_add_dev:
 	mhi_dealloc_device(mhi_cntrl, mhi_dev);
@@ -1897,6 +2031,8 @@ void mhi_unregister_mhi_controller(struct mhi_controller *mhi_cntrl)
 		kfree(sfr_info->str);
 		kfree(sfr_info);
 	}
+	if (mhi_cntrl->has_soc_reset)
+		device_remove_group(&mhi_dev->dev, &cntrl_soc_reset_group);
 
 	device_del(&mhi_dev->dev);
 	put_device(&mhi_dev->dev);
@@ -2284,7 +2420,7 @@ static int __init mhi_init(void)
 	INIT_LIST_HEAD(&mhi_bus.controller_list);
 
 	/* parent directory */
-	debugfs_create_dir(mhi_bus_type.name, NULL);
+	root_dentry = debugfs_create_dir(mhi_bus_type.name, NULL);
 
 	ret = bus_register(&mhi_bus_type);
 
@@ -2292,7 +2428,16 @@ static int __init mhi_init(void)
 		mhi_dtr_init();
 	return ret;
 }
+
+static void __exit mhi_exit(void)
+{
+	mhi_dtr_exit();
+	bus_unregister(&mhi_bus_type);
+	debugfs_remove_recursive(root_dentry);
+}
+
 postcore_initcall(mhi_init);
+module_exit(mhi_exit);
 
 MODULE_LICENSE("GPL v2");
 MODULE_ALIAS("MHI_CORE");

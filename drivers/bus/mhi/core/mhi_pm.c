@@ -7,9 +7,11 @@
 #include <linux/dma-direction.h>
 #include <linux/dma-mapping.h>
 #include <linux/interrupt.h>
+#include <linux/iopoll.h>
 #include <linux/list.h>
 #include <linux/of.h>
 #include <linux/module.h>
+#include <linux/sched.h>
 #include <linux/slab.h>
 #include <linux/wait.h>
 #include <linux/mhi.h>
@@ -309,13 +311,13 @@ int mhi_ready_state_transition(struct mhi_controller *mhi_cntrl)
 		if (mhi_event->offload_ev || mhi_event->hw_ring)
 			continue;
 
+		spin_lock_irq(&mhi_event->lock);
 		ring->wp = ring->base + ring->len - ring->el_size;
 		*ring->ctxt_wp = ring->iommu_base + ring->len - ring->el_size;
 		/* needs to update to all cores */
 		smp_wmb();
 
 		/* ring the db for event rings */
-		spin_lock_irq(&mhi_event->lock);
 		mhi_ring_er_db(mhi_event);
 		spin_unlock_irq(&mhi_event->lock);
 	}
@@ -526,12 +528,12 @@ static int mhi_pm_mission_mode_transition(struct mhi_controller *mhi_cntrl)
 		if (mhi_event->offload_ev || !mhi_event->hw_ring)
 			continue;
 
+		spin_lock_irq(&mhi_event->lock);
 		ring->wp = ring->base + ring->len - ring->el_size;
 		*ring->ctxt_wp = ring->iommu_base + ring->len - ring->el_size;
 		/* all ring updates must get updated immediately */
 		smp_wmb();
 
-		spin_lock_irq(&mhi_event->lock);
 		if (MHI_DB_ACCESS_VALID(mhi_cntrl))
 			mhi_ring_er_db(mhi_event);
 		spin_unlock_irq(&mhi_event->lock);
@@ -619,6 +621,7 @@ static void mhi_pm_disable_transition(struct mhi_controller *mhi_cntrl,
 
 	/* trigger MHI RESET so device will not access host ddr */
 	if (MHI_REG_ACCESS_VALID(prev_state)) {
+		u32 ready = 0;
 		unsigned long timeout = msecs_to_jiffies(mhi_cntrl->timeout_ms);
 
 		MHI_CNTRL_LOG("Trigger device into MHI_RESET\n");
@@ -645,6 +648,24 @@ static void mhi_pm_disable_transition(struct mhi_controller *mhi_cntrl,
 				BHI_INTVEC, 0);
 
 		mhi_cntrl->initiate_mhi_reset = false;
+
+		if (!MHI_IN_PBL(mhi_get_exec_env(mhi_cntrl))) {
+			/* wait for ready to be set */
+			ret = wait_event_timeout(mhi_cntrl->state_event,
+						 mhi_read_reg_field(mhi_cntrl,
+							mhi_cntrl->regs,
+							MHISTATUS,
+							MHISTATUS_READY_MASK,
+							MHISTATUS_READY_SHIFT,
+							&ready)
+						 || ready, timeout);
+			if ((!ret || !ready) && cur_state == MHI_PM_SYS_ERR_PROCESS) {
+				dev_err(mhi_cntrl->dev,
+					"Device failed to enter READY state\n");
+				mutex_unlock(&mhi_cntrl->pm_mutex);
+				return;
+			}
+		}
 	}
 
 	MHI_CNTRL_LOG(
@@ -926,6 +947,7 @@ int mhi_async_power_up(struct mhi_controller *mhi_cntrl)
 	enum mhi_ee current_ee;
 	enum MHI_ST_TRANSITION next_state;
 	struct mhi_device *mhi_dev = mhi_cntrl->mhi_dev;
+	enum mhi_dev_state state;
 
 	MHI_CNTRL_LOG("Requested to power on\n");
 
@@ -1015,6 +1037,24 @@ int mhi_async_power_up(struct mhi_controller *mhi_cntrl)
 		goto error_bhi_offset;
 	}
 
+	state = mhi_get_mhi_state(mhi_cntrl);
+	if (state == MHI_STATE_SYS_ERR) {
+		mhi_set_mhi_state(mhi_cntrl, MHI_STATE_RESET);
+		ret = readl_poll_timeout(mhi_cntrl->regs + MHICTRL, val,
+					 !(val & MHICTRL_RESET_MASK), 1000,
+					 mhi_cntrl->timeout_ms * 1000);
+		if (ret) {
+			dev_info(mhi_cntrl->dev, "Failed to reset syserr\n");
+			goto error_bhi_offset;
+		}
+
+		/*
+		 * device cleares INTVEC as part of RESET processing,
+		 * re-program it
+		 */
+		mhi_write_reg(mhi_cntrl, mhi_cntrl->bhi, BHI_INTVEC, 0);
+	}
+
 	/* transition to next state */
 	next_state = MHI_IN_PBL(current_ee) ?
 		MHI_ST_TRANSITION_PBL : MHI_ST_TRANSITION_READY;
@@ -1038,6 +1078,7 @@ error_setup_irq:
 		mhi_deinit_dev_ctxt(mhi_cntrl);
 
 error_dev_ctxt:
+	mhi_cntrl->pm_state = MHI_PM_DISABLE;
 	mutex_unlock(&mhi_cntrl->pm_mutex);
 
 	return ret;
@@ -1101,6 +1142,13 @@ void mhi_power_down(struct mhi_controller *mhi_cntrl, bool graceful)
 
 	write_lock_irq(&mhi_cntrl->pm_lock);
 	mhi_cntrl->power_down = true;
+	cur_state = mhi_cntrl->pm_state;
+	if (cur_state == MHI_PM_DISABLE) {
+		write_unlock_irq(&mhi_cntrl->pm_lock);
+		mutex_unlock(&mhi_cntrl->pm_mutex);
+		return; /* Already powered down */
+	}
+
 	/* if it's not graceful shutdown, force MHI to a linkdown state */
 	if (!graceful) {
 		cur_state = mhi_tryset_pm_state(mhi_cntrl,
@@ -1153,6 +1201,8 @@ int mhi_sync_power_up(struct mhi_controller *mhi_cntrl)
 		mhi_cntrl->timeout_ms);
 	mhi_cntrl->status_cb(mhi_cntrl, mhi_cntrl->priv_data,
 			     MHI_CB_BOOTUP_TIMEOUT);
+	mhi_power_down(mhi_cntrl, false);
+
 	return -ETIMEDOUT;
 }
 EXPORT_SYMBOL(mhi_sync_power_up);

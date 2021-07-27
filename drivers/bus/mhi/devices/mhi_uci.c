@@ -27,6 +27,7 @@ struct uci_chan {
 	struct list_head pending; /* user space waiting to read */
 	struct uci_buf *cur_buf; /* current buffer user space reading */
 	size_t rx_size;
+	struct mutex read_lock;
 };
 
 struct uci_buf {
@@ -364,11 +365,12 @@ static ssize_t mhi_uci_read(struct file *file,
 
 	MSG_VERB("Client provided buf len:%lu\n", count);
 
+	mutex_lock(&uci_chan->read_lock);
 	/* confirm channel is active */
 	spin_lock_bh(&uci_chan->lock);
 	if (!uci_dev->enabled) {
-		spin_unlock_bh(&uci_chan->lock);
-		return -ERESTARTSYS;
+		ret = -ERESTARTSYS;
+		goto unlock_spinlock;
 	}
 
 	/* No data available to read, wait */
@@ -381,14 +383,15 @@ static ssize_t mhi_uci_read(struct file *file,
 				 !list_empty(&uci_chan->pending)));
 		if (ret == -ERESTARTSYS) {
 			MSG_LOG("Exit signal caught for node\n");
-			return -ERESTARTSYS;
+			ret = -ERESTARTSYS;
+			goto unlock_mutex;
 		}
 
 		spin_lock_bh(&uci_chan->lock);
 		if (!uci_dev->enabled) {
 			MSG_LOG("node is disabled\n");
 			ret = -ERESTARTSYS;
-			goto read_error;
+			goto unlock_spinlock;
 		}
 	}
 
@@ -398,7 +401,7 @@ static ssize_t mhi_uci_read(struct file *file,
 						   struct uci_buf, node);
 		if (unlikely(!uci_buf)) {
 			ret = -EIO;
-			goto read_error;
+			goto unlock_spinlock;
 		}
 
 		list_del(&uci_buf->node);
@@ -416,14 +419,14 @@ static ssize_t mhi_uci_read(struct file *file,
 
 	ret = copy_to_user(buf, ptr, to_copy);
 	if (ret)
-		return ret;
+		goto unlock_mutex;
 
 	spin_lock_bh(&uci_chan->lock);
 	/* Buffer already queued from diff thread while we dropped lock ? */
 	if (to_copy && !uci_chan->rx_size) {
 		MSG_VERB("Bailout as buffer already queued (%lu %lu)\n",
 			 to_copy, uci_chan->rx_size);
-		goto read_error;
+		goto unlock_spinlock;
 	}
 
 	MSG_VERB("Copied %lu of %lu bytes\n", to_copy, uci_chan->rx_size);
@@ -443,17 +446,21 @@ static ssize_t mhi_uci_read(struct file *file,
 		if (ret) {
 			MSG_ERR("Failed to recycle element\n");
 			kfree(uci_buf->data);
-			goto read_error;
+			goto unlock_spinlock;
 		}
 	}
 	spin_unlock_bh(&uci_chan->lock);
 
 	MSG_VERB("Returning %lu bytes\n", to_copy);
 
+	mutex_unlock(&uci_chan->read_lock);
 	return to_copy;
 
-read_error:
+unlock_spinlock:
 	spin_unlock_bh(&uci_chan->lock);
+
+unlock_mutex:
+	mutex_unlock(&uci_chan->read_lock);
 
 	return ret;
 }
@@ -480,6 +487,7 @@ static int mhi_uci_open(struct inode *inode, struct file *filp)
 	mutex_lock(&uci_dev->mutex);
 	if (!uci_dev->enabled) {
 		MSG_ERR("Node exist, but not in active state!\n");
+		ret = -ENODEV;
 		goto error_open_chan;
 	}
 
@@ -589,14 +597,16 @@ static int mhi_uci_probe(struct mhi_device *mhi_dev,
 	mutex_init(&uci_dev->mutex);
 	uci_dev->mhi_dev = mhi_dev;
 
+	mutex_lock(&uci_dev->mutex);
+	mutex_lock(&mhi_uci_drv.lock);
+
 	minor = find_first_zero_bit(uci_minors, MAX_UCI_DEVICES);
 	if (minor >= MAX_UCI_DEVICES) {
+		mutex_unlock(&mhi_uci_drv.lock);
+		mutex_unlock(&uci_dev->mutex);
 		kfree(uci_dev);
 		return -ENOSPC;
 	}
-
-	mutex_lock(&uci_dev->mutex);
-	mutex_lock(&mhi_uci_drv.lock);
 
 	uci_dev->devt = MKDEV(mhi_uci_drv.major, minor);
 	uci_dev->dev = device_create(mhi_uci_drv.class, &mhi_dev->dev,
@@ -621,6 +631,7 @@ static int mhi_uci_probe(struct mhi_device *mhi_dev,
 		spin_lock_init(&uci_chan->lock);
 		init_waitqueue_head(&uci_chan->wq);
 		INIT_LIST_HEAD(&uci_chan->pending);
+		mutex_init(&uci_chan->read_lock);
 	}
 
 	uci_dev->mtu = min_t(size_t, id->driver_data, mhi_dev->mtu);
@@ -705,6 +716,8 @@ static const struct mhi_device_id mhi_uci_match_table[] = {
 	{ .chan = "DUN", .driver_data = 0x1000 },
 	{ .chan = "QAIC_DIAG", .driver_data = 0x1000 },
 	{ .chan = "QAIC_SAHARA", .driver_data = 0x8000 },
+	{ .chan = "QAIC_QDSS", .driver_data = 0x1000 },
+	{ .chan = "QAIC_TIMESYNC", .driver_data = 0x1000 },
 	{},
 };
 
