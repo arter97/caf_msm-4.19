@@ -1921,22 +1921,6 @@ static int cnss_do_recovery(struct cnss_plat_data *plat_priv,
 		break;
 	}
 
-	/* If recovery is enabled, fatal notification is sent to wifi driver
-	 * as soon as MHI notifies error.
-	 * If recovery is disabled, send fatal notification here after RDDM
-	 * is done so that we have the RDDM information before the assert
-	 * is triggered from the wifi driver.
-	 */
-	if (!plat_priv->recovery_enabled) {
-		/* This is a special case where ramdump file is uploaded to
-		 * TFTP and then host assert happens. It is disabled by default.
-		 */
-		if (ramdump_enabled)
-			cnss_bus_dev_ramdump(plat_priv);
-
-		cnss_pci_update_status(plat_priv->bus_priv, CNSS_FW_DOWN);
-	}
-
 	if (!subsys_info->subsys_device)
 		return 0;
 
