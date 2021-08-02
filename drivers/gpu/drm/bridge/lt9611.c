@@ -1144,6 +1144,12 @@ void lt9611_hpd_evt_handle(struct lt9611 *pdata)
 		pdata->hpd_status = false;
 		pdata->edid_status = false;
 		pdata->hpd_trigger = false;
+		if (pdata->lt9611_func->video_on) {
+			if (pdata->lt9611_func->video_on(pdata, false)) {
+				pr_err("video on failed\n");
+				return;
+			}
+		}
 	}
 
 	if (!pdata->bridge_attach) {
@@ -1197,9 +1203,8 @@ static irqreturn_t lt9611_irq_thread_handler(int irq, void *dev_id)
 	/* hpd changed */
 	if (irq_flag3 & (BIT(6) | BIT(7))) {
 		lt9611_hpd_evt_handle(pdata);
+		lt9611_write_array(pdata, clr_irq3, ARRAY_SIZE(clr_irq3));
 	}
-
-	lt9611_write_array(pdata, clr_irq3, ARRAY_SIZE(clr_irq3));
 
 	return IRQ_HANDLED;
 }
@@ -2004,16 +2009,7 @@ static void lt9611_bridge_enable(struct drm_bridge *bridge)
 
 static void lt9611_bridge_disable(struct drm_bridge *bridge)
 {
-	struct lt9611 *pdata = bridge_to_lt9611(bridge);
-
 	pr_info("@lt9611 bridge disable\n");
-
-	if (pdata->lt9611_func->video_on) {
-		if (pdata->lt9611_func->video_on(pdata, false)) {
-			pr_err("video on failed\n");
-			return;
-		}
-	}
 }
 
 static void lt9611_bridge_mode_set(struct drm_bridge *bridge,
@@ -2287,7 +2283,7 @@ static ssize_t dump_info_show(struct device *dev,
 		pdata->pending_edid, pdata->edid_status, pdata->hpd_trigger, pdata->fix_mode);
 	len += snprintf(buf + len, (PAGE_SIZE - len), "cur_mode(%dx%d@%d)\n", pdata->curr_mode.hdisplay,
 		pdata->curr_mode.vdisplay, pdata->curr_mode.vrefresh);
-	len += snprintf(buf + len, (PAGE_SIZE - len), "Real Hpd\n", lt9611_hpd_status(pdata));
+	len += snprintf(buf + len, (PAGE_SIZE - len), "Real Hpd(%d)\n", lt9611_hpd_status(pdata));
 
 	return len;
 }
@@ -2752,9 +2748,10 @@ static int lt9611_probe(struct i2c_client *client,
 		return -ENOMEM;
 	}
 
+	INIT_WORK(&pdata->work, lt9611_hpd_work);
+
 	lt9611_init_setup(pdata);
 
-	INIT_WORK(&pdata->work, lt9611_hpd_work);
 	pdata->irq = gpio_to_irq(pdata->irq_gpio);
 	ret = request_threaded_irq(pdata->irq, NULL, pdata->lt9611_func->irq_handle,
 		IRQF_TRIGGER_FALLING | IRQF_ONESHOT, "lt9611_irq", pdata);
