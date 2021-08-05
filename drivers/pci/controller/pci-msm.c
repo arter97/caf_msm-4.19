@@ -682,7 +682,7 @@ struct msm_pcie_dev_t {
 	enum msm_pcie_link_status link_status;
 	bool user_suspend;
 	bool disable_pc;
-	bool disable_pm;
+	bool suspend_late;
 	struct pci_saved_state *saved_state;
 
 	struct wakeup_source ws;
@@ -834,7 +834,6 @@ static u32 base_sel;
 static u32 wr_offset;
 static u32 wr_mask;
 static u32 wr_value;
-static u32 pm_value;
 static u32 corr_counter_limit = 5;
 
 /* CRC8 table for BDF to SID translation */
@@ -2220,7 +2219,6 @@ static struct dentry *dfile_linkdown_panic;
 static struct dentry *dfile_wr_offset;
 static struct dentry *dfile_wr_mask;
 static struct dentry *dfile_wr_value;
-static struct dentry *dfile_pm_value;
 static struct dentry *dfile_boot_option;
 static struct dentry *dfile_aer_enable;
 static struct dentry *dfile_corr_counter_limit;
@@ -2449,30 +2447,6 @@ static const struct file_operations msm_pcie_debugfs_wr_value_ops = {
 	.write = msm_pcie_debugfs_wr_value,
 };
 
-static ssize_t msm_pcie_debugfs_pm_value(struct file *file,
-                                const char __user *buf,
-                                size_t count, loff_t *ppos)
-{
-        int ret;
-
-        pm_value = 0;
-
-        ret = msm_pcie_debugfs_parse_input(buf, count, &pm_value);
-        if (ret)
-                return ret;
-
-        pr_alert("PCIe: pm_value is now 0x%x\n", pm_value);
-	if (pm_value)
-		msm_pcie_dev[2].disable_pm = true;
-	else
-		msm_pcie_dev[2].disable_pm = false;
-        return count;
-}
-
-static const struct file_operations msm_pcie_debugfs_pm_value_ops = {
-        .write = msm_pcie_debugfs_pm_value,
-};
-
 static ssize_t msm_pcie_debugfs_boot_option(struct file *file,
 				const char __user *buf,
 				size_t count, loff_t *ppos)
@@ -2632,14 +2606,6 @@ static void msm_pcie_debugfs_init(void)
 		goto wr_value_error;
 	}
 
-	dfile_pm_value = debugfs_create_file("pm_value", 0664,
-                                        dent_msm_pcie, NULL,
-                                        &msm_pcie_debugfs_pm_value_ops);
-        if (!dfile_pm_value || IS_ERR(dfile_pm_value)) {
-                pr_err("PCIe: fail to create the file for debug_fs pm_value.\n");
-                goto pm_value_error;
-        }
-
 	dfile_boot_option = debugfs_create_file("boot_option", 0664,
 					dent_msm_pcie, NULL,
 					&msm_pcie_debugfs_boot_option_ops);
@@ -2673,8 +2639,6 @@ boot_option_error:
 	debugfs_remove(dfile_wr_value);
 wr_value_error:
 	debugfs_remove(dfile_wr_mask);
-pm_value_error:
-	debugfs_remove(dfile_pm_value);
 wr_mask_error:
 	debugfs_remove(dfile_wr_offset);
 wr_offset_error:
@@ -2698,7 +2662,6 @@ static void msm_pcie_debugfs_exit(void)
 	debugfs_remove(dfile_wr_offset);
 	debugfs_remove(dfile_wr_mask);
 	debugfs_remove(dfile_wr_value);
-	debugfs_remove(dfile_pm_value);
 	debugfs_remove(dfile_boot_option);
 	debugfs_remove(dfile_aer_enable);
 	debugfs_remove(dfile_corr_counter_limit);
@@ -4324,9 +4287,6 @@ static int msm_pcie_enable(struct msm_pcie_dev_t *dev)
 	/* Enable device reset pin of ponrst */
 	if (dev->gpio[MSM_PCIE_GPIO_PONRST].num) {
 		gpio_set_value(dev->gpio[MSM_PCIE_GPIO_PONRST].num,
-			dev->gpio[MSM_PCIE_GPIO_PONRST].on);
-		usleep_range(dev->ponrst_delay_min, dev->ponrst_delay_max);
-		gpio_set_value(dev->gpio[MSM_PCIE_GPIO_PONRST].num,
 				1 - dev->gpio[MSM_PCIE_GPIO_PONRST].on);
 		usleep_range(dev->ponrst_delay_min, dev->ponrst_delay_max);
 	}
@@ -4436,10 +4396,6 @@ static void msm_pcie_disable(struct msm_pcie_dev_t *dev)
 
 	gpio_set_value(dev->gpio[MSM_PCIE_GPIO_PERST].num,
 				dev->gpio[MSM_PCIE_GPIO_PERST].on);
-
-	if (dev->gpio[MSM_PCIE_GPIO_PONRST].num)
-		gpio_set_value(dev->gpio[MSM_PCIE_GPIO_PONRST].num,
-				dev->gpio[MSM_PCIE_GPIO_PONRST].on);
 
 	if (dev->phy_power_down_offset)
 		msm_pcie_write_reg(dev->phy, dev->phy_power_down_offset, 0);
@@ -4757,7 +4713,7 @@ int msm_pcie_enumerate(u32 rc_idx)
 		goto out;
 	}
 
-	if (IS_ENABLED(CONFIG_PCI_MSM_MSI) && !dev->disable_pm) {
+	if (IS_ENABLED(CONFIG_PCI_MSM_MSI)) {
 		ret = msm_msi_init(&dev->pdev->dev);
 		if (ret)
 			goto out;
@@ -5935,7 +5891,7 @@ static int msm_pcie_probe(struct platform_device *pdev)
 				&pcie_dev->ponrst_delay_max);
 	PCIE_DBG(pcie_dev, "RC%d: ponrst-delay-max: %ums.\n", pcie_dev->rc_idx,
 				pcie_dev->ponrst_delay_max);
-	pcie_dev->disable_pm = of_property_read_bool(of_node, "qcom,disable-suspend");
+	pcie_dev->suspend_late = of_property_read_bool(of_node, "qcom,suspend-late");
 
 	of_property_read_u32(of_node, "qcom,switch-latency",
 				&pcie_dev->switch_latency);
@@ -6845,8 +6801,6 @@ static int msm_pcie_pm_suspend(struct pci_dev *dev,
 
 	PCIE_DBG(pcie_dev, "RC%d: entry\n", pcie_dev->rc_idx);
 
-	if(pcie_dev->disable_pm)
-		return ret;
 	spin_lock_irqsave(&pcie_dev->irq_lock, irqsave_flags);
 	pcie_dev->suspending = true;
 	spin_unlock_irqrestore(&pcie_dev->irq_lock, irqsave_flags);
@@ -6915,6 +6869,9 @@ static void msm_pcie_fixup_suspend(struct pci_dev *dev)
 
 	PCIE_DBG(pcie_dev, "RC%d\n", pcie_dev->rc_idx);
 
+	if (pcie_dev->suspend_late)
+		return;
+
 	if (pcie_dev->link_status != MSM_PCIE_LINK_ENABLED ||
 		!pci_is_root_bus(dev->bus))
 		return;
@@ -6943,6 +6900,46 @@ static void msm_pcie_fixup_suspend(struct pci_dev *dev)
 }
 DECLARE_PCI_FIXUP_SUSPEND(PCIE_VENDOR_ID_QCOM, PCI_ANY_ID,
 			  msm_pcie_fixup_suspend);
+
+/* Suspend the PCIe late */
+static void msm_pcie_fixup_suspend_late(struct pci_dev *dev)
+{
+	int ret;
+	struct msm_pcie_dev_t *pcie_dev = PCIE_BUS_PRIV_DATA(dev->bus);
+
+	PCIE_DBG(pcie_dev, "RC%d\n", pcie_dev->rc_idx);
+
+	if (!pcie_dev->suspend_late)
+		return;
+
+	if (pcie_dev->link_status != MSM_PCIE_LINK_ENABLED ||
+		!pci_is_root_bus(dev->bus))
+		return;
+
+	spin_lock_irqsave(&pcie_dev->cfg_lock,
+			pcie_dev->irqsave_flags);
+	if (pcie_dev->disable_pc) {
+		PCIE_DBG(pcie_dev,
+			"RC%d: Skip suspend because of user request\n",
+			pcie_dev->rc_idx);
+		spin_unlock_irqrestore(&pcie_dev->cfg_lock,
+			pcie_dev->irqsave_flags);
+		return;
+	}
+	spin_unlock_irqrestore(&pcie_dev->cfg_lock,
+				pcie_dev->irqsave_flags);
+
+	mutex_lock(&pcie_dev->recovery_lock);
+
+	ret = msm_pcie_pm_suspend(dev, NULL, NULL, 0);
+	if (ret)
+		PCIE_ERR(pcie_dev, "PCIe: RC%d got failure in suspend:%d.\n",
+			pcie_dev->rc_idx, ret);
+
+	mutex_unlock(&pcie_dev->recovery_lock);
+}
+DECLARE_PCI_FIXUP_SUSPEND_LATE(PCIE_VENDOR_ID_QCOM, PCI_ANY_ID,
+                          msm_pcie_fixup_suspend_late);
 
 /* Resume the PCIe link */
 static int msm_pcie_pm_resume(struct pci_dev *dev,
