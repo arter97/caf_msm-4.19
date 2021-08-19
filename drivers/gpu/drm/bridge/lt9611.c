@@ -42,10 +42,12 @@ struct lt9611 *pStdata;
 #define CFG_VID_CHK_INTERRUPTS BIT(3)
 
 #define EDID_SEG_SIZE 256
+#define EDID_ERR_RETRY 5
 #define READ_BUF_MAX_SIZE 128
 #define WRITE_BUF_MAX_SIZE 128
 #define HPD_UEVENT_BUFFER_SIZE 32
 #define EDID_TIMEOUT_MS 2000
+#define VIC_FIX_4k30 95
 
 struct lt9611_reg_cfg {
 	u8 reg;
@@ -180,6 +182,12 @@ struct lt9611_chip_funcs {
 	int (*video_on)(struct lt9611 *pdata, bool on);
 };
 
+static int lt9611_get_edid_block(void *data, u8 *buf, unsigned int block,
+		size_t len);
+static int lt9611_enable_interrupts(struct lt9611 *pdata,
+		int interrupts, bool on);
+static bool lt9611_hpd_status(struct lt9611 *pdata);
+
 /*
  * Write one reg with one value;
  * Reg -> value
@@ -290,27 +298,50 @@ static void lt9611_hpd_work(struct work_struct *work)
 	pr_info("@lt9611 hpd_work\n");
 
 	if (!pdata || !pdata->connector.funcs ||
-		!pdata->connector.funcs->detect)
-		return;
-
-	dev = pdata->connector.dev;
-	last_status = pdata->connector.status;
-	pdata->connector.status =
-		pdata->connector.funcs->detect(&pdata->connector, true);
-
-	if (last_status == pdata->connector.status) {
+		!pdata->connector.funcs->detect) {
+		pr_err("not init done before hpd_work\n");
 		return;
 	}
 
-	if (pdata->connector.status != connector_status_connected) {
-		pr_debug("release edid\n");
-		list_for_each_entry_safe(mode, n, &pdata->support_mode_list, head) {
-			list_del(&mode->head);
-			kfree(mode);
+	lt9611_enable_interrupts(pdata, CFG_HPD_INTERRUPTS, 1);
+
+	dev = pdata->connector.dev;
+
+	pdata->hpd_status = lt9611_hpd_status(pdata);
+	last_status = pdata->connector.status;
+	pdata->connector.status = pdata->hpd_status;
+
+	if (last_status == pdata->connector.status) {
+		pr_info("hpd same status ignore\n");
+		return;
+	}
+
+	if (pdata->connector.status == connector_status_connected) {
+		int ret = 0;
+		int count = 0;
+
+		/* For compatibility keep last edid until next HDMI plug on. */
+		if (pdata->edid) {
+			list_for_each_entry_safe(mode, n,
+				&pdata->support_mode_list, head) {
+				list_del(&mode->head);
+				kfree(mode);
+			}
+			kfree(pdata->edid);
+			pdata->edid = NULL;
 		}
-		pdata->edid_complete = false;
-		kfree(pdata->edid);
-		pdata->edid = NULL;
+
+		/* EDID error handle,
+		 * Multi consecutive errors means sink edid block is broken.
+		 */
+		do {
+			ret = pdata->lt9611_func->read_edid(pdata);
+			count++;
+			pr_info("read edid cnt(%d)\n", count);
+		} while (ret != 0 && (count < EDID_ERR_RETRY));
+
+		pdata->edid = drm_do_get_edid(&pdata->connector,
+			lt9611_get_edid_block, pdata);
 	}
 
 	scnprintf(name, HPD_UEVENT_BUFFER_SIZE, "name=%s",
@@ -789,6 +820,9 @@ static int lt9611_pcr_setup(struct lt9611 *pdata,
 		lt9611_write_array(pdata, reg_cfg_vesa_spe, ARRAY_SIZE(reg_cfg_vesa_spe));
 	}
 
+	lt9611_mipi_video_setup(pdata, cfg);
+
+	lt9611_write_byte(pdata, 0xff, 0x83);
 	lt9611_write_byte(pdata, 0x26, pdata->pcr_m);
 	/* pcr rst */
 	lt9611_write_array(pdata, pcr_rst, ARRAY_SIZE(pcr_rst));
@@ -921,8 +955,32 @@ static int lt9611_hdmi_tx_digital(struct lt9611 *pdata,
 	u32 checksum, vic;
 	struct lt9611_reg_cfg reg_cfg[] = {
 		{0xff, 0x82},
-		{0xd6, 0x8c},
+		{0xd6, 0x8e},
 		{0xd7, 0x04},
+
+		{0xff, 0x84},
+		{0x10, 0x02}, /* data iland */
+		{0x12, 0x64}, /* act_h_blank */
+	};
+
+	struct lt9611_reg_cfg reg_cfg_4k30[] = {
+		{0xff, 0x84},
+		{0x3d, 0x28}, /* AVI 0x08 | UD0 0x20 */
+
+		{0x74, 0x81}, /* HB0 */
+		{0x75, 0x01}, /* HB1 */
+		{0x76, 0x05}, /* HB2 */
+		{0x77, 0x49}, /* PB0 */
+		{0x78, 0x03}, /* PB1 */
+		{0x79, 0x0c}, /* PB2 */
+		{0x7a, 0x00}, /* PB3 */
+		{0x7b, 0x20}, /* PB4 */
+		{0x7c, 0x01}, /* PB5 */
+	};
+
+	struct lt9611_reg_cfg reg_cfg_other[] = {
+		{0xff, 0x84},
+		{0x3d, 0x08}, /* AVI 0x08 */
 	};
 
 	if (!pdata || !cfg) {
@@ -935,10 +993,14 @@ static int lt9611_hdmi_tx_digital(struct lt9611 *pdata,
 
 	lt9611_write_byte(pdata, 0xff, 0x84);
 	lt9611_write_byte(pdata, 0x43, checksum);
-	lt9611_write_byte(pdata, 0x44, 0x84);
 	lt9611_write_byte(pdata, 0x47, vic);
 
 	lt9611_write_array(pdata, reg_cfg, ARRAY_SIZE(reg_cfg));
+
+	if (vic == VIC_FIX_4k30)
+		lt9611_write_array(pdata, reg_cfg_4k30, ARRAY_SIZE(reg_cfg_4k30));
+	else
+		lt9611_write_array(pdata, reg_cfg_other, ARRAY_SIZE(reg_cfg_other));
 
 	return ret;
 }
@@ -1045,12 +1107,16 @@ static void lt9611_lowpower_mode(struct lt9611 *pdata, bool on)
 
 static void lt9611_init_interrupts(struct lt9611 *pdata)
 {
-	//int hpd interrupt
+	/* Init interrupt
+	 * HPD debounce is used for HPD stable time,
+	 * with default debounce 0x80, HDMI switch can not detect,
+	 * after redude to 0x40 can detect switch HPD change.
+	 */
 	struct lt9611_reg_cfg isr_init[] = {
 		{0xff, 0x82},
-		{0x58, 0x0a},	//Det HPD 0x0a --> 0x08 20200727
-		{0x59, 0x80},	//HPD debounce width
-		{0x9e, 0xf7},	//intial vid change interrupt
+		{0x58, 0x0a},	/* Det HPD 0x08 --> 0x0a */
+		{0x59, 0x40},	/* HPD debounce width */
+		{0x9e, 0xf7},	/* initial vid change interrupt */
 	};
 
 	if (!pdata) {
@@ -1124,69 +1190,24 @@ end:
 	return ret;
 }
 
-void lt9611_hpd_evt_handle(struct lt9611 *pdata)
-{
-	bool edid_old_status = false;
-	bool hpd_cur = lt9611_hpd_status(pdata);
-
-	mutex_lock(&pdata->lock);
-	edid_old_status = pdata->edid_status;
-
-	pr_info("@lt9611 hpd status(%d)\n", hpd_cur);
-
-	if (hpd_cur) {
-		pr_debug("@lt9611 hdmi cable connected\n");
-		pdata->hpd_status = true;
-		pdata->edid_status = true;
-		pdata->hpd_trigger = true;
-	} else {
-		pr_debug("@lt9611 hdmi cable disconnected\n");
-		pdata->hpd_status = false;
-		pdata->edid_status = false;
-		pdata->hpd_trigger = false;
-		if (pdata->lt9611_func->video_on) {
-			if (pdata->lt9611_func->video_on(pdata, false)) {
-				pr_err("video on failed\n");
-				return;
-			}
-		}
-	}
-
-	if (!pdata->bridge_attach) {
-		if (pdata->edid_status)
-			pdata->pending_edid = true;
-	}
-
-	pr_debug("@lt9611 hdmi connected edid status: %d\n", pdata->edid_status);
-
-	if (!edid_old_status && pdata->edid_status) {
-		pr_debug("@lt9611 pending edid\n");
-		pdata->edid_complete = true;
-		mutex_unlock(&pdata->lock);
-		wake_up_all(&pdata->edid_wq);
-	} else {
-		if (!pdata->edid_status)
-			pdata->edid_complete = false;
-		mutex_unlock(&pdata->lock);
-	}
-
-	queue_work(pdata->wq, &pdata->work);
-
-	if (!pdata->bridge_attach) {
-		pr_err("@lt9611 bridge not attach (hpd)\n");
-		return;
-	}
-}
-
 static irqreturn_t lt9611_irq_thread_handler(int irq, void *dev_id)
 {
 	struct lt9611 *pdata = dev_id;
 	u8 irq_flag3 = 0;
+	u8 irq_flag0 = 0;
 
 	struct lt9611_reg_cfg clr_irq3[] = {
 		{0xff, 0x82},	/* irq 3 clear flag */
 		{0x07, 0xff},
 		{0x07, 0x3f},
+	};
+
+	struct lt9611_reg_cfg clr_irq0[] = {
+		{0xff, 0x82},	/* irq 0 clear flag */
+		{0x9e, 0xff},
+		{0x9e, 0xf7},
+		{0x04, 0xff},
+		{0x04, 0xfe},
 	};
 
 	if (!pdata->power_on)
@@ -1197,14 +1218,27 @@ static irqreturn_t lt9611_irq_thread_handler(int irq, void *dev_id)
 
 	lt9611_write_byte(pdata, 0xff, 0x82);
 	lt9611_read(pdata, 0x0f, &irq_flag3, 1);
+	lt9611_read(pdata, 0x0c, &irq_flag0, 1);
 
-	pr_info("@lt9611 hpd_irq(%x)\n", irq_flag3);
+	pr_info("@lt9611 hpd_irq(%x) vid(%x)\n", irq_flag3, irq_flag0);
 
 	/* hpd changed */
 	if (irq_flag3 & (BIT(6) | BIT(7))) {
-		lt9611_hpd_evt_handle(pdata);
+		/* For lt9611 HPD interrupt control,
+		 * interrupt happended during clr interrupt bit and return ISR,
+		 * then no interrupt can be detected after this.
+		 * So need disable HPD interrupt before clr interrupt,
+		 * and enable HPD interrupt in queue work.
+		 */
+		lt9611_enable_interrupts(pdata, CFG_HPD_INTERRUPTS, 0);
+
 		lt9611_write_array(pdata, clr_irq3, ARRAY_SIZE(clr_irq3));
+		queue_work(pdata->wq, &pdata->work);
 	}
+
+	/* vid changed */
+	if (irq_flag0 & (BIT(0)))
+		lt9611_write_array(pdata, clr_irq0, ARRAY_SIZE(clr_irq0));
 
 	return IRQ_HANDLED;
 }
@@ -1302,9 +1336,8 @@ static int lt9611_init_setup(struct lt9611 *pdata)
 	lt9611_lowpower_mode(pdata, 0);
 	lt9611_init_interrupts(pdata);
 	lt9611_enable_interrupts(pdata, CFG_HPD_INTERRUPTS, 1);
-	msleep(40);
 
-	lt9611_hpd_evt_handle(pdata);
+	queue_work(pdata->wq, &pdata->work);
 
 	return ret;
 }
@@ -1356,8 +1389,6 @@ static int lt9611_video_update(struct lt9611 *pdata)
 	lt9611_pll_setup(pdata, cfg);
 	lt9611_pcr_setup(pdata, cfg);
 
-	//video timing
-	lt9611_mipi_video_setup(pdata, cfg);
 	//info frame
 	lt9611_hdmi_tx_digital(pdata, cfg);
 
@@ -1710,7 +1741,7 @@ static void lt9611_set_video_cfg(struct lt9611 *pdata,
 	video_cfg->num_of_lanes = 4;
 	video_cfg->num_of_intfs = pdata->intf_num;
 
-	pr_debug("video=h[%d,%d,%d,%d] v[%d,%d,%d,%d] pclk=%d lane=%d intf=%d\n",
+	pr_info("video=h[%d,%d,%d,%d] v[%d,%d,%d,%d] pclk=%d lane=%d intf=%d\n",
 		video_cfg->h_active, video_cfg->h_front_porch,
 		video_cfg->h_pulse_width, video_cfg->h_back_porch,
 		video_cfg->v_active, video_cfg->v_front_porch,
@@ -1725,7 +1756,11 @@ static void lt9611_set_video_cfg(struct lt9611 *pdata,
 		video_cfg->scaninfo = avi_frame.scan_mode;
 		video_cfg->ar = avi_frame.picture_aspect;
 		video_cfg->vic = avi_frame.video_code;
-		pr_debug("scaninfo=%d ar=%d vic=%d\n",
+
+		if ((video_cfg->h_active == 3840) && (video_cfg->v_active == 2160))
+			video_cfg->vic = VIC_FIX_4k30;
+
+		pr_info("scaninfo=%d ar=%d vic=%d\n",
 			video_cfg->scaninfo, video_cfg->ar, video_cfg->vic);
 	}
 }
@@ -1737,7 +1772,7 @@ lt9611_connector_detect(struct drm_connector *connector, bool force)
 	struct lt9611 *pdata = connector_to_lt9611(connector);
 
 	if (force) {
-		int connected = lt9611_hpd_status(pdata);
+		int connected = pdata->hpd_status;
 
 		pdata->status = connected ?  connector_status_connected :
 			connector_status_disconnected;
@@ -1892,34 +1927,7 @@ static int lt9611_connector_get_modes(struct drm_connector *connector)
 	struct lt9611 *pdata = connector_to_lt9611(connector);
 	struct drm_display_mode *mode, *m;
 	unsigned int count = 0;
-	long ret = 0;
 
-	mutex_lock(&pdata->lock);
-	if (pdata->pending_edid || pdata->edid_complete) {
-		pdata->pending_edid = false;
-		pdata->edid_complete = false;
-		mutex_unlock(&pdata->lock);
-		goto read_edid;
-	} else if (!pdata->edid_status && pdata->hpd_trigger) {
-		pdata->hpd_trigger = false;
-		mutex_unlock(&pdata->lock);
-		ret = wait_event_timeout(pdata->edid_wq, pdata->edid_complete,
-			msecs_to_jiffies(EDID_TIMEOUT_MS));
-		if (!ret)
-			goto skip_read_edid;
-	} else {
-		mutex_unlock(&pdata->lock);
-		goto skip_read_edid;
-	}
-
-read_edid:
-	if (!pdata->edid) {
-		pdata->lt9611_func->read_edid(pdata);
-		pdata->edid = drm_do_get_edid(connector,
-			lt9611_get_edid_block, pdata);
-	}
-
-skip_read_edid:
 	if (pdata->edid) {
 		drm_connector_update_edid_property(connector,
 			pdata->edid);
@@ -2127,6 +2135,9 @@ static int lt9611_bridge_attach(struct drm_bridge *bridge)
 
 	pdata->dsi = dsi;
 	pdata->bridge_attach = true;
+
+	/* Add wq for bootup edid adaption */
+	queue_work(pdata->wq, &pdata->work);
 
 	return 0;
 
@@ -2551,10 +2562,12 @@ static ssize_t debug_mode_show(struct device *dev,
 {
 	ssize_t len = 0;
 
-	len += snprintf(buf + len, (PAGE_SIZE - len), "=== hdmi debug traning ========\n");
-	len += snprintf(buf + len, (PAGE_SIZE - len), "echo [index] > debug_mode\n");
-	len += snprintf(buf + len, (PAGE_SIZE - len), "0 reset only | 1 reset full | 2 init reset\n");
-	len += snprintf(buf + len, (PAGE_SIZE - len), "3 pw + reset | 4 self check\n");
+	len += snprintf(buf + len, (PAGE_SIZE - len),
+		"=== hdmi debug traning ========\n");
+	len += snprintf(buf + len, (PAGE_SIZE - len),
+		"echo [index] [ext_param] > debug_mode\n");
+	len += snprintf(buf + len, (PAGE_SIZE - len),
+		"0 clr hpd | 1 self check | 2 hpd debounce\n");
 
 	return len;
 }
@@ -2565,51 +2578,43 @@ static ssize_t debug_mode_store(struct device *dev,
 		size_t count)
 {
 	int dbg_index = 0;
+	int param = 0;
 	struct lt9611 *pdata = dev_get_drvdata(dev);
+	struct lt9611_reg_cfg clr_irq3[] = {
+		{0xff, 0x82},	/* irq 3 clear flag */
+		{0x07, 0xff},
+		{0x07, 0x3f},
+	};
 
 	if (!pdata) {
 		pr_err("pdata is NULL\n");
 		return -EINVAL;
 	}
 
-	if (sscanf(buf, "%d", &dbg_index) != 1)
+	if (sscanf(buf, "%d %d", &dbg_index, &param) != 2)
 		goto err;
 
-	switch (dbg_index)
-	{
-		case 0:
-			lt9611_reset(pdata, 1);
-			break;
-		case 1:
-			lt9611_reset(pdata, 1);
-			lt9611_video_update(pdata);
-			lt9611_video_on(pdata, 1);
-			break;
-		case 2:
-			lt9611_init_setup(pdata);
-			lt9611_reset(pdata, 1);
-			lt9611_video_update(pdata);
-			lt9611_video_on(pdata, 1);
-			break;
-		case 3:
-			lt9611_enable_interrupts(pdata, CFG_HPD_INTERRUPTS, 0);
-			lt9611_power_on(pdata, 0);
-			lt9611_power_on(pdata, 1);
-			lt9611_init_setup(pdata);
-			lt9611_reset(pdata, 1);
-			lt9611_video_update(pdata);
-			lt9611_video_on(pdata, 1);
-			break;
-		case 4:
-			lt9611_video_check(pdata);
-			lt9611_freq_meter_bype_clk(pdata);
-			lt9611_htotal_sysclk(pdata);
-			lt9611_pcr_mk_debug(pdata);
-			lt9611_dphy_debug(pdata);
-			break;
-		default:
-			pr_err("mode unsupport\n");
-			break;
+	switch (dbg_index) {
+	case 0:
+		pr_info("clr interrupt bit\n");
+		lt9611_write_array(pdata, clr_irq3, ARRAY_SIZE(clr_irq3));
+		break;
+	case 1:
+		lt9611_video_check(pdata);
+		lt9611_freq_meter_bype_clk(pdata);
+		lt9611_htotal_sysclk(pdata);
+		lt9611_pcr_mk_debug(pdata);
+		lt9611_dphy_debug(pdata);
+		break;
+	case 2:
+		/* hpd debounce */
+		pr_info("hpd debounce 0x59(%x)\n", param);
+		lt9611_write_byte(pdata, 0xff, 0x82);
+		lt9611_write_byte(pdata, 0x59, param);
+		break;
+	default:
+		pr_err("mode unsupport\n");
+		break;
 	}
 
 	return count;
