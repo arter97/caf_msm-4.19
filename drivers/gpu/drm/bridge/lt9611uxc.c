@@ -175,6 +175,8 @@ static struct lt9611_timing_info lt9611_supp_timing_cfg[] = {
 static int lt9611_read_edid(struct lt9611 *pdata);
 static int lt9611_get_edid_block(void *data, u8 *buf, unsigned int block,
 				  size_t len);
+static void lt9611_change_to_dvi(struct lt9611 *pdata);
+static void lt9611_change_to_hdmi(struct lt9611 *pdata);
 static void lt9611_ctl_en(struct lt9611 *pdata);
 static void lt9611_ctl_disable(struct lt9611 *pdata);
 static void lt9611_read_cec_msg(struct lt9611 *pdata, struct cec_msg *msg);
@@ -189,6 +191,13 @@ void lt9611_edid_work(struct work_struct *work)
 	lt9611_read_edid(pdata);
 	pdata->edid = drm_do_get_edid(&pdata->connector,
 			lt9611_get_edid_block, pdata);
+
+	// Change interface after we get new edid.
+	// DVI interface don't have extension block
+	if (!pdata->edid_with_ext_blk)
+		lt9611_change_to_dvi(pdata);
+	else
+		lt9611_change_to_hdmi(pdata);
 
 	// Get new CEC physical address after EDID changed.
 	if (pdata->cec_support)
@@ -951,6 +960,28 @@ static int lt9611_read_device_id(struct lt9611 *pdata)
 	lt9611_write_byte(pdata, 0xEE, 0x00);
 
 	return ret;
+}
+
+static void lt9611_change_to_dvi(struct lt9611 *pdata)
+{
+	mutex_lock(&pdata->lock);
+	lt9611_ctl_en(pdata);
+	lt9611_write_byte(pdata, 0xFF, 0xC0);
+	lt9611_write_byte(pdata, 0x01, 0x00);
+	lt9611_ctl_disable(pdata);
+	pdata->cec_support = false;
+	mutex_unlock(&pdata->lock);
+}
+
+static void lt9611_change_to_hdmi(struct lt9611 *pdata)
+{
+	mutex_lock(&pdata->lock);
+	lt9611_ctl_en(pdata);
+	lt9611_write_byte(pdata, 0xFF, 0xC0);
+	lt9611_write_byte(pdata, 0x01, 0x08);
+	lt9611_ctl_disable(pdata);
+	pdata->cec_support = true;
+	mutex_unlock(&pdata->lock);
 }
 
 static irqreturn_t lt9611_irq_thread_handler(int irq, void *dev_id)
