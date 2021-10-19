@@ -700,12 +700,14 @@ uvc_function_bind(struct usb_configuration *c, struct usb_function *f)
 	uvc_iad.bFirstInterface = ret;
 	uvc_control_intf.bInterfaceNumber = ret;
 	uvc->control_intf = ret;
+	opts->control_interface = ret;
 
 	if ((ret = usb_interface_id(c, f)) < 0)
 		goto error;
 	uvc_streaming_intf_alt0.bInterfaceNumber = ret;
 	uvc_streaming_intf_alt1.bInterfaceNumber = ret;
 	uvc->streaming_intf = ret;
+	opts->streaming_interface = ret;
 
 	/* Copy descriptors */
 	f->fs_descriptors = uvc_copy_descriptors(uvc, USB_SPEED_FULL);
@@ -802,6 +804,7 @@ static struct usb_function_instance *uvc_alloc_inst(void)
 	struct uvc_output_terminal_descriptor *od;
 	struct uvc_color_matching_descriptor *md;
 	struct uvc_descriptor_header **ctl_cls;
+	int ret;
 
 	opts = kzalloc(sizeof(*opts), GFP_KERNEL);
 	if (!opts)
@@ -880,7 +883,12 @@ static struct usb_function_instance *uvc_alloc_inst(void)
 	opts->streaming_interval = 1;
 	opts->streaming_maxpacket = 1024;
 
-	uvcg_attach_configfs(opts);
+	ret = uvcg_attach_configfs(opts);
+	if (ret < 0) {
+		kfree(opts);
+		return ERR_PTR(ret);
+	}
+
 	return &opts->func_inst;
 }
 
