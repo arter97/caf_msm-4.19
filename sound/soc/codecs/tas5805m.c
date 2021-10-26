@@ -25,6 +25,7 @@
 #include <linux/of_device.h>
 #include <linux/gpio/consumer.h>
 #include <linux/of_gpio.h>
+#include <linux/kernel.h>
 
 #include <sound/soc.h>
 #include <sound/pcm.h>
@@ -287,6 +288,9 @@ struct TAS5805m_priv {
 
 	int pdn_gpio;
 
+	int hpd_gpio;
+	int irq;
+
 	int init_done;
 };
 
@@ -295,6 +299,50 @@ const struct regmap_config TAS5805m_regmap = {
 	.val_bits = 8,
 	.cache_type = REGCACHE_RBTREE,
 };
+
+static void tas5805m_i2c_mute(struct i2c_client *client, int mute)
+{
+	uint8_t buf[2];
+
+	buf[0] = TAS5805M_REG_00;
+	buf[1] = TAS5805M_PAGE_00;
+	i2c_master_send(client, buf, 2);
+
+	buf[0] = TAS5805M_REG_7F;
+	buf[1] = TAS5805M_BOOK_00;
+	i2c_master_send(client, buf, 2);
+
+	buf[0] = TAS5805M_REG_00;
+	buf[1] = TAS5805M_PAGE_00;
+	i2c_master_send(client, buf, 2);
+
+	if (mute) {
+		buf[0] = TAS5805M_REG_03;
+		buf[1] = 0x0B;
+		i2c_master_send(client, buf, 2);
+
+		buf[0] = TAS5805M_REG_35;
+		buf[1] = 0x00;
+		i2c_master_send(client, buf, 2);
+	} else {
+		buf[0] = TAS5805M_REG_03;
+		buf[1] = 0x03;
+		i2c_master_send(client, buf, 2);
+
+		buf[0] = TAS5805M_REG_35;
+		buf[1] = 0x11;
+		i2c_master_send(client, buf, 2);
+	}
+}
+
+static irqreturn_t tas5805m_hpd_thread_handler(int irq, void *p)
+{
+	struct TAS5805m_priv *pdata = (struct TAS5805m_priv *)p;
+
+	tas5805m_i2c_mute(pdata->client,
+			(gpio_get_value(pdata->hpd_gpio) == 1));
+	return IRQ_HANDLED;
+}
 
 static int TAS5805m_vol_info(struct snd_kcontrol *kcontrol,
 		struct snd_ctl_elem_info *uinfo)
@@ -413,7 +461,7 @@ static int TAS5805m_get_volsw(struct snd_kcontrol *kcontrol,
 }
 
 static int TAS5805m_put_volsw(struct snd_kcontrol *kcontrol,
-			struct snd_ctl_elem_value *uinfo)
+		struct snd_ctl_elem_value *uinfo)
 {
 	struct snd_soc_component *component =
 		snd_soc_kcontrol_component(kcontrol);
@@ -504,11 +552,11 @@ static int i2c_read_reg(struct i2c_client *client, u8 reg, u8 *data)
 	struct device *dev = &client->dev;
 
 	struct i2c_msg msgs[] = {
-	{
-		.addr   = client->addr,
-		.flags  = 0,
-		.len    = 1,
-		.buf    = &reg,
+		{
+			.addr   = client->addr,
+			.flags  = 0,
+			.len    = 1,
+			.buf    = &reg,
 		},
 		{
 			.addr   = client->addr,
@@ -620,6 +668,27 @@ static int TAS5805m_probe(struct i2c_client *client, struct regmap *regmap)
 		return -EINVAL;
 	}
 
+	priv->hpd_gpio = of_get_named_gpio(np, "gpio,hpd", 0);
+	if (priv->hpd_gpio < 0) {
+		dev_info(dev, "Failed to find hpd gpio!\n");
+	} else {
+		priv->irq = gpio_to_irq(priv->hpd_gpio);
+		if (priv->irq < 0) {
+			dev_err(dev, "failed to get irq %d\n", ret);
+			return -EINVAL;
+		}
+
+		ret = request_threaded_irq(priv->irq, NULL,
+			tas5805m_hpd_thread_handler,
+			IRQF_TRIGGER_FALLING |
+			IRQF_TRIGGER_RISING | IRQF_ONESHOT,
+			"tas5805_hpd_irq", priv);
+		if (ret) {
+			dev_err(dev, "failed to request irq %d\n", ret);
+			return -EINVAL;
+		}
+	}
+
 	ret = gpio_request_one(priv->pdn_gpio, GPIOF_OUT_INIT_LOW,
 			"TAS5805 pdn");
 	if (ret < 0) {
@@ -647,6 +716,10 @@ static int TAS5805m_probe(struct i2c_client *client, struct regmap *regmap)
 		dev_err(dev, "Failed to register CODEC: %d\n", ret);
 		goto err;
 	}
+
+	if (priv->hpd_gpio >= 0)
+		tas5805m_i2c_mute(priv->client, gpio_get_value
+				(priv->hpd_gpio) == 1);
 
 	return 0;
 
