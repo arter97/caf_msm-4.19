@@ -27,7 +27,7 @@
 #define KGSL_IOMMU_SVM_BASE32		0x300000
 #define KGSL_IOMMU_SVM_END32		(0xC0000000 - SZ_16M)
 
-#define KGSL_IOMMU_VA_BASE64		0x500000000ULL
+#define KGSL_IOMMU_VA_BASE64		0x300000000ULL
 #define KGSL_IOMMU_VA_END64		0x600000000ULL
 /*
  * Note: currently we only support 36 bit addresses,
