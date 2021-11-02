@@ -28,15 +28,15 @@
 #define KGSL_IOMMU_SVM_END32		(0xC0000000 - SZ_16M)
 
 #define KGSL_IOMMU_VA_BASE64		0x300000000ULL
-#define KGSL_IOMMU_VA_END64		0x600000000ULL
+#define KGSL_IOMMU_VA_END64		0xB00000000ULL
 /*
  * Note: currently we only support 36 bit addresses,
  * but the CPU supports 39. Eventually this range
  * should change to high part of the 39 bit address
  * space just like the CPU.
  */
-#define KGSL_IOMMU_SVM_BASE64		0x700000000ULL
-#define KGSL_IOMMU_SVM_END64		0x800000000ULL
+#define KGSL_IOMMU_SVM_BASE64		0xB00000000ULL
+#define KGSL_IOMMU_SVM_END64		0xC00000000ULL
 #define CP_APERTURE_REG			0
 #define CP_SMMU_APERTURE_ID		0x1B
 /* TLBSTATUS register fields */
