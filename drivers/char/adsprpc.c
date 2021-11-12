@@ -2501,7 +2501,7 @@ bail:
 
 static int fastrpc_mmap_remove_pdr(struct fastrpc_file *fl);
 static int fastrpc_channel_open(struct fastrpc_file *fl);
-static int fastrpc_mmap_remove_ssr(struct fastrpc_file *fl);
+static int fastrpc_mmap_remove_ssr(struct fastrpc_file *fl, int locked);
 static int fastrpc_init_process(struct fastrpc_file *fl,
 				struct fastrpc_ioctl_init_attrs *uproc)
 {
@@ -2514,7 +2514,9 @@ static int fastrpc_init_process(struct fastrpc_file *fl,
 	struct fastrpc_buf *imem = NULL;
 	unsigned long imem_dma_attr = 0;
 	char *proc_name = NULL;
-	int unsigned_request = (uproc->attrs & FASTRPC_MODE_UNSIGNED_MODULE);
+	bool init_flags = init->flags == FASTRPC_INIT_CREATE ? true : false;
+	int proc_attrs = uproc->attrs & FASTRPC_MODE_UNSIGNED_MODULE;
+	int unsigned_request = proc_attrs && init_flags;
 	int cid = fl->cid;
 	struct fastrpc_channel_ctx *chan = &me->channel[cid];
 
@@ -2671,7 +2673,7 @@ static int fastrpc_init_process(struct fastrpc_file *fl,
 		if (!init->filelen)
 			goto bail;
 
-		proc_name = kzalloc(init->filelen, GFP_KERNEL);
+		proc_name = kzalloc(init->filelen + 1, GFP_KERNEL);
 		VERIFY(err, !IS_ERR_OR_NULL(proc_name));
 		if (err)
 			goto bail;
@@ -3079,7 +3081,7 @@ bail:
 }
 
 static int fastrpc_munmap_on_dsp_rh(struct fastrpc_file *fl, uint64_t phys,
-						size_t size, uint32_t flags)
+					size_t size, uint32_t flags, int locked)
 {
 	int err = 0;
 	struct fastrpc_apps *me = &gfa;
@@ -3090,13 +3092,14 @@ static int fastrpc_munmap_on_dsp_rh(struct fastrpc_file *fl, uint64_t phys,
 	if (flags == ADSP_MMAP_HEAP_ADDR) {
 		struct fastrpc_ioctl_invoke_crc ioctl;
 		remote_arg_t ra[2];
-		int err = 0;
+		int err = 0, cid = 0;
 		struct {
 			uint8_t skey;
 		} routargs;
 
 		if (fl == NULL)
 			goto bail;
+		cid = fl->cid;
 		tgid = fl->tgid;
 		ra[0].buf.pv = (void *)&tgid;
 		ra[0].buf.len = sizeof(tgid);
@@ -3111,8 +3114,16 @@ static int fastrpc_munmap_on_dsp_rh(struct fastrpc_file *fl, uint64_t phys,
 		ioctl.attrs = NULL;
 		ioctl.crc = NULL;
 
+		if (locked) {
+			mutex_unlock(&fl->map_mutex);
+			mutex_unlock(&me->channel[cid].smd_mutex);
+		}
 		VERIFY(err, 0 == (err = fastrpc_internal_invoke(fl,
 				FASTRPC_MODE_PARALLEL, 1, &ioctl)));
+		if (locked) {
+			mutex_lock(&me->channel[cid].smd_mutex);
+			mutex_lock(&fl->map_mutex);
+		}
 		if (err)
 			goto bail;
 	} else if (flags == ADSP_MMAP_REMOTE_HEAP_ADDR) {
@@ -3146,7 +3157,8 @@ static int fastrpc_munmap_on_dsp(struct fastrpc_file *fl, uintptr_t raddr,
 		goto bail;
 	if (flags == ADSP_MMAP_HEAP_ADDR ||
 				flags == ADSP_MMAP_REMOTE_HEAP_ADDR) {
-		VERIFY(err, !fastrpc_munmap_on_dsp_rh(fl, phys, size, flags));
+		VERIFY(err, !fastrpc_munmap_on_dsp_rh(fl, phys, size,
+						flags, 0));
 		if (err)
 			goto bail;
 	}
@@ -3154,7 +3166,7 @@ bail:
 	return err;
 }
 
-static int fastrpc_mmap_remove_ssr(struct fastrpc_file *fl)
+static int fastrpc_mmap_remove_ssr(struct fastrpc_file *fl, int locked)
 {
 	struct fastrpc_mmap *match = NULL, *map = NULL;
 	struct hlist_node *n = NULL;
@@ -3177,7 +3189,7 @@ static int fastrpc_mmap_remove_ssr(struct fastrpc_file *fl)
 
 		if (match) {
 			err = fastrpc_munmap_on_dsp_rh(fl, match->phys,
-						match->size, match->flags);
+					match->size, match->flags, locked);
 			if (err)
 				goto bail;
 			if (me->ramdump_handle && me->enable_ramdump) {
@@ -3224,7 +3236,7 @@ static int fastrpc_mmap_remove_pdr(struct fastrpc_file *fl)
 	}
 	if (me->channel[fl->cid].spd[session].pdrcount !=
 		me->channel[fl->cid].spd[session].prevpdrcount) {
-		err = fastrpc_mmap_remove_ssr(fl);
+		err = fastrpc_mmap_remove_ssr(fl, 0);
 		if (err)
 			pr_warn("adsprpc: %s: %s: failed to unmap remote heap (err %d)\n",
 					__func__, current->comm, err);
@@ -4012,12 +4024,12 @@ static int fastrpc_channel_open(struct fastrpc_file *fl)
 	if (cid == ADSP_DOMAIN_ID && me->channel[cid].ssrcount !=
 			 me->channel[cid].prevssrcount) {
 		mutex_lock(&fl->map_mutex);
-		err = fastrpc_mmap_remove_ssr(fl);
+		err = fastrpc_mmap_remove_ssr(fl, 1);
+		mutex_unlock(&fl->map_mutex);
 		if (err)
 			pr_warn("adsprpc: %s: %s: failed to unmap remote heap for %s (err %d)\n",
 					__func__, current->comm,
 					me->channel[cid].subsys, err);
-		mutex_unlock(&fl->map_mutex);
 		me->channel[cid].prevssrcount =
 					me->channel[cid].ssrcount;
 	}
@@ -4561,7 +4573,6 @@ static long fastrpc_device_ioctl(struct file *file, unsigned int ioctl_num,
 		break;
 	default:
 		err = -ENOTTY;
-		pr_info("bad ioctl: %d\n", ioctl_num);
 		break;
 	}
  bail:
