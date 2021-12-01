@@ -80,6 +80,12 @@ u32 ieee80211_channel_to_freq_khz(int chan, enum nl80211_band band)
 			return MHZ_TO_KHZ(2484);
 		else if (chan < 14)
 			return MHZ_TO_KHZ(2407 + chan * 5);
+		else if (chan  == 221)
+			return MHZ_TO_KHZ(2477);
+		else if (chan == 222)
+			return MHZ_TO_KHZ(2482);
+		else if (chan > 200)
+			return MHZ_TO_KHZ(2399 + (chan - 200) * 5);
 		break;
 	case NL80211_BAND_5GHZ:
 		if (chan >= 182 && chan <= 196)
