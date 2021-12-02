@@ -1626,7 +1626,9 @@ static enum drm_mode_status lt9611_connector_mode_valid(
 
 	list_for_each_entry_safe(mode, n, &pdata->mode_list, head) {
 		if (drm_mode->vdisplay == mode->vdisplay &&
+			drm_mode->vtotal == mode->vtotal &&
 			drm_mode->hdisplay == mode->hdisplay &&
+			drm_mode->htotal == mode->htotal &&
 			drm_mode->vrefresh == mode->vrefresh)
 			return MODE_OK;
 	}
