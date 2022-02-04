@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /* Copyright (c) 2016-2020, The Linux Foundation. All rights reserved. */
+/* Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved. */
 
 #include <linux/delay.h>
 #include <linux/jiffies.h>
@@ -75,6 +76,26 @@ static void cnss_set_plat_priv(struct platform_device *plat_dev,
 struct cnss_plat_data *cnss_get_plat_priv(struct platform_device *plat_dev)
 {
 	return plat_env;
+}
+
+int cnss_set_feature_list(struct cnss_plat_data *plat_priv,
+			  enum cnss_feature_v01 feature)
+{
+	if (unlikely(!plat_priv || feature >= CNSS_MAX_FEATURE_V01))
+		return -EINVAL;
+
+	plat_priv->feature_list |= 1 << feature;
+	return 0;
+}
+
+int cnss_get_feature_list(struct cnss_plat_data *plat_priv,
+			  u64 *feature_list)
+{
+	if (unlikely(!plat_priv))
+		return -EINVAL;
+
+	*feature_list = plat_priv->feature_list;
+	return 0;
 }
 
 static int cnss_pm_notify(struct notifier_block *b,
@@ -754,7 +775,7 @@ int cnss_idle_shutdown(struct device *dev)
 
 	reinit_completion(&plat_priv->recovery_complete);
 	ret = wait_for_completion_timeout(&plat_priv->recovery_complete,
-					  RECOVERY_TIMEOUT);
+					  msecs_to_jiffies(RECOVERY_TIMEOUT));
 	if (!ret) {
 		cnss_pr_err("Timeout waiting for recovery to complete\n");
 		CNSS_ASSERT(0);
@@ -1083,6 +1104,14 @@ static int cnss_do_recovery(struct cnss_plat_data *plat_priv,
 		if (test_bit(LINK_DOWN_SELF_RECOVERY,
 			     &plat_priv->ctrl_params.quirks))
 			goto self_recovery;
+		if (!cnss_bus_recover_link_down(plat_priv)) {
+			/* clear recovery bit here to avoid skipping
+			 * the recovery work for RDDM later
+			 */
+			clear_bit(CNSS_DRIVER_RECOVERY,
+				  &plat_priv->driver_state);
+			return 0;
+		}
 		break;
 	case CNSS_REASON_RDDM:
 		cnss_bus_collect_dump_info(plat_priv, false);
