@@ -4721,9 +4721,17 @@ int msm_pcie_enumerate(u32 rc_idx)
 	}
 
 	if (IS_ENABLED(CONFIG_PCI_MSM_MSI)) {
-		ret = msm_msi_init(&dev->pdev->dev);
-		if (ret)
-			goto out;
+		/* The GICv3 MBI driver could be in use */
+		if (of_device_is_compatible(
+					    of_parse_phandle(
+							     dev->pdev->dev.of_node,
+							     "msi-parent",
+							     0),
+					    "qcom,pci-msi")) {
+			ret = msm_msi_init(&dev->pdev->dev);
+			if (ret)
+				goto out;
+		}
 	}
 
 	list_splice_init(&res, &bridge->windows);
