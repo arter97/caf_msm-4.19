@@ -148,7 +148,7 @@ static void lt9611_change_to_dvi(struct lt9611 *pdata);
 static void lt9611_change_to_hdmi(struct lt9611 *pdata);
 static void lt9611_ctl_en(struct lt9611 *pdata);
 static void lt9611_ctl_disable(struct lt9611 *pdata);
-static void lt9611_read_cec_msg(struct lt9611 *pdata, struct cec_msg *msg);
+static int lt9611_read_cec_msg(struct lt9611 *pdata, struct cec_msg *msg);
 
 void lt9611_edid_work(struct work_struct *work)
 {
@@ -197,8 +197,8 @@ void lt9611_cec_work(struct work_struct *work)
 		pr_info("CEC message is receiving.\n");
 		return;
 	}
-	lt9611_read_cec_msg(pdata, &cec_msg);
-	cec_received_msg(pdata->cec_adapter, &cec_msg);
+	if (lt9611_read_cec_msg(pdata, &cec_msg) == 0)
+		cec_received_msg(pdata->cec_adapter, &cec_msg);
 };
 
 void lt9611_hpd_work(struct work_struct *work)
@@ -921,10 +921,11 @@ void lt9611_edid_disable(struct lt9611 *pdata)
 	lt9611_write_byte(pdata, 0x0B, 0x00);
 }
 
-void lt9611_read_cec_msg(struct lt9611 *pdata, struct cec_msg *msg)
+int lt9611_read_cec_msg(struct lt9611 *pdata, struct cec_msg *msg)
 {
 	u8 cec_len, i;
 	u8 reg_cec_flag;
+	int ret = 0;
 	struct i2c_client *client = pdata->i2c_client;
 	struct i2c_msg i2c_msg[CEC_MAX_MSG_SIZE * 2];
 
@@ -937,6 +938,12 @@ void lt9611_read_cec_msg(struct lt9611 *pdata, struct cec_msg *msg)
 		pr_err("ERROR: CEC message length = %u, will limit to %d\n",
 				cec_len, CEC_MAX_MSG_SIZE);
 		cec_len = CEC_MAX_MSG_SIZE;
+	}
+	if (cec_len == 0) {
+		pr_err("ERROR: CEC message length = %u, skip read CEC message.\n",
+				cec_len);
+		ret = -EINVAL;
+		goto end;
 	}
 	msg->len = cec_len;
 
@@ -952,18 +959,23 @@ void lt9611_read_cec_msg(struct lt9611 *pdata, struct cec_msg *msg)
 		i2c_msg[i * 2 + 1].buf = &(msg->msg[i]);
 	}
 
-	if (i2c_transfer(client->adapter, i2c_msg, msg->len*2) != msg->len*2)
+	if (i2c_transfer(client->adapter, i2c_msg, msg->len*2) != msg->len*2) {
 		pr_err("i2c read failed\n");
+		ret = -EIO;
+		goto end;
+	}
 
 	// Set bit7 = 0 to tell LT9611UXC message received.
 	reg_cec_flag &= ~0x80;
 	lt9611_write_byte(pdata, 0x24, reg_cec_flag);
+end:
 	lt9611_ctl_disable(pdata);
 	mutex_unlock(&pdata->lock);
 
 	/* To check what message received from HDMI Sink */
 	for (i = 0; i < msg->len; i++)
 		pr_alert("received msg[%d] = %x", i, msg->msg[i]);
+	return ret;
 }
 
 static int lt9611_read_device_id(struct lt9611 *pdata)
