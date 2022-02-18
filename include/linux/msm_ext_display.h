@@ -180,6 +180,14 @@ int msm_ext_disp_select_audio_codec(struct platform_device *pdev,
 		struct msm_ext_disp_codec_id *codec);
 
 /**
+ *  msm_ext_soundcard_register_notify_dp() - audio on after sound init
+ *  @pdev: platform device pointer
+ *  @codec: codec id information
+ */
+int msm_ext_soundcard_register_notify_dp(struct platform_device *pdev,
+		struct msm_ext_disp_codec_id *codec);
+
+/**
  *  msm_hdmi_register_audio_codec() - wrapper for hdmi audio codec
  * registration
  *  @pdev: platform device pointer
