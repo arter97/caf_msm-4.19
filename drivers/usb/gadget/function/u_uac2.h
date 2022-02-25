@@ -28,14 +28,21 @@ struct f_uac2_opts {
 	int				p_chmask;
 	int				p_srate;
 	int				p_ssize;
+	int				p_status;
 	int				c_chmask;
 	int				c_srate;
 	int				c_ssize;
+	int				c_status;
 	int				req_number;
 	bool				bound;
 
+	struct device			*device;
+#ifdef CONFIG_USB_CONFIGFS_UEVENT
+	struct work_struct		work;
+#endif
 	struct mutex			lock;
 	int				refcnt;
 };
 
+extern struct device *create_function_device(char *name);
 #endif
