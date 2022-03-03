@@ -50,7 +50,6 @@ out:
 	return ice_vops;
 }
 
-static
 void sdhci_msm_enable_ice_hci(struct sdhci_host *host, bool enable)
 {
 	struct sdhci_pltfm_host *pltfm_host = sdhci_priv(host);

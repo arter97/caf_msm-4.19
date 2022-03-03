@@ -4418,8 +4418,12 @@ static void sdhci_msm_reset(struct sdhci_host *host, u8 mask)
 	}
 
 	sdhci_reset(host, mask);
+
 	if ((host->mmc->caps2 & MMC_CAP2_CQE) && (mask & SDHCI_RESET_ALL))
 		cqhci_suspend(host->mmc);
+
+	if (host->is_crypto_en && (mask & SDHCI_RESET_ALL))
+		sdhci_msm_enable_ice_hci(host, true);
 }
 
 /*
@@ -5101,6 +5105,9 @@ static void sdhci_msm_hw_reset(struct sdhci_host *host)
 
 	sdhci_msm_registers_restore(host);
 	msm_host->reg_store = false;
+
+	if (host->is_crypto_en)
+		sdhci_msm_enable_ice_hci(host, true);
 out:
 	return;
 }

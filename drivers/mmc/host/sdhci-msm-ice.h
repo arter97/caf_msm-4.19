@@ -104,6 +104,7 @@ int sdhci_msm_ice_resume(struct sdhci_host *host);
 int sdhci_msm_ice_suspend(struct sdhci_host *host);
 int sdhci_msm_ice_get_status(struct sdhci_host *host, int *ice_status);
 void sdhci_msm_ice_print_regs(struct sdhci_host *host);
+void sdhci_msm_enable_ice_hci(struct sdhci_host *host, bool enable);
 #else
 inline int sdhci_msm_ice_get_dev(struct sdhci_host *host)
 {
@@ -158,6 +159,10 @@ inline int sdhci_msm_ice_get_status(struct sdhci_host *host,
 	return 0;
 }
 inline void sdhci_msm_ice_print_regs(struct sdhci_host *host)
+{
+}
+inline void sdhci_msm_enable_ice_hci(struct sdhci_host *host,
+					bool enable)
 {
 }
 #endif /* CONFIG_MMC_SDHCI_MSM_ICE */
