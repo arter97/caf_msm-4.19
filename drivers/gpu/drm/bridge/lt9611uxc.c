@@ -1935,42 +1935,16 @@ err:
 	return -EINVAL;
 }
 
-static ssize_t debug_rst_store(struct device *dev,
-	struct device_attribute *attr, const char *buf,
-	size_t count)
-{
-	int reset = 0;
-	struct lt9611 *pdata = dev_get_drvdata(dev);
-
-	if (!pdata)
-		goto err;
-
-	if (kstrtoint(buf, 0, &reset) != 0)
-		goto err;
-
-	if (reset)
-		lt9611_reset(pdata, true);
-	else
-		lt9611_reset(pdata, false);
-
-	return count;
-
-err:
-	return -EINVAL;
-}
-
 static DEVICE_ATTR_WO(dump_info);
 static DEVICE_ATTR_RW(firmware_upgrade);
 static DEVICE_ATTR_RO(get_hpd_stat);
 static DEVICE_ATTR_RW(edid_mode);
-static DEVICE_ATTR_WO(debug_rst);
 
 static struct attribute *lt9611_sysfs_attrs[] = {
 	&dev_attr_dump_info.attr,
 	&dev_attr_firmware_upgrade.attr,
 	&dev_attr_get_hpd_stat.attr,
 	&dev_attr_edid_mode.attr,
-	&dev_attr_debug_rst.attr,
 	NULL,
 };
 
