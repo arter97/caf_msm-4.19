@@ -3,6 +3,7 @@
  * QTI Crypto Engine driver.
  *
  * Copyright (c) 2012-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #define pr_fmt(fmt) "QCE50: %s: " fmt, __func__
@@ -2339,7 +2340,7 @@ static int _f9_complete(struct qce_device *pce_dev, int req_info)
 
 static int _ablk_cipher_complete(struct qce_device *pce_dev, int req_info)
 {
-	struct ablkcipher_request *areq;
+	struct skcipher_request *areq;
 	unsigned char iv[NUM_OF_CRYPTO_CNTR_IV_REG * CRYPTO_REG_SIZE];
 	int32_t result_status = 0;
 	uint32_t result_dump_status;
@@ -2350,7 +2351,7 @@ static int _ablk_cipher_complete(struct qce_device *pce_dev, int req_info)
 	preq_info = &pce_dev->ce_request_info[req_info];
 	pce_sps_data = &preq_info->ce_sps;
 	qce_callback = preq_info->qce_cb;
-	areq = (struct ablkcipher_request *) preq_info->areq;
+	areq = (struct skcipher_request *) preq_info->areq;
 	if (areq->src != areq->dst) {
 		qce_dma_unmap_sg(pce_dev->pdev, areq->dst,
 			preq_info->dst_nents, DMA_FROM_DEVICE);
@@ -2403,9 +2404,9 @@ static int _ablk_cipher_complete(struct qce_device *pce_dev, int req_info)
 				unsigned long long cntr_iv64 = 0;
 				unsigned char *b = (unsigned char *)(&cntr_iv3);
 
-				memcpy(iv, areq->info, sizeof(iv));
+				memcpy(iv, areq->iv, sizeof(iv));
 				if (preq_info->mode != QCE_MODE_XTS)
-					num_blk = areq->nbytes/16;
+					num_blk = areq->cryptlen/16;
 				else
 					num_blk = 1;
 				cntr_iv3 =  ((*(iv + 12) << 24) & 0xff000000) |
@@ -2801,10 +2802,10 @@ static int qce_sps_init_ep_conn(struct qce_device *pce_dev,
 					sizeof(struct sps_iovec);
 	if (sps_connect_info->desc.size > MAX_SPS_DESC_FIFO_SIZE)
 		sps_connect_info->desc.size = MAX_SPS_DESC_FIFO_SIZE;
-	sps_connect_info->desc.base = dma_zalloc_coherent(pce_dev->pdev,
+	sps_connect_info->desc.base = dma_alloc_coherent(pce_dev->pdev,
 					sps_connect_info->desc.size,
 					&sps_connect_info->desc.phys_base,
-					GFP_KERNEL);
+					GFP_KERNEL | __GFP_ZERO);
 	if (sps_connect_info->desc.base == NULL) {
 		rc = -ENOMEM;
 		pr_err("Can not allocate coherent memory for sps data\n");
@@ -2945,7 +2946,7 @@ static int qce_sps_get_bam(struct qce_device *pce_dev)
 	}
 	pbam->cnt = 1;
 	pbam->bam_mem = pce_dev->bam_mem;
-	pbam->bam_iobase = ioremap_nocache(pce_dev->bam_mem,
+	pbam->bam_iobase = ioremap(pce_dev->bam_mem,
 					pce_dev->bam_mem_size);
 	if (!pbam->bam_iobase) {
 		kfree(pbam);
@@ -3220,7 +3221,6 @@ static void _sps_producer_callback(struct sps_event_notify *notify)
 	struct ce_request_info *preq_info;
 
 	print_notify_debug(notify);
-
 	req_info = (unsigned int)((uintptr_t)notify->data.transfer.user);
 	if ((req_info & 0xffff0000)  != CRYPTO_REQ_USER_PAT) {
 		pr_warn("request information %d out of range\n", req_info);
@@ -5312,13 +5312,12 @@ int qce_ablk_cipher_req(void *handle, struct qce_req *c_req)
 {
 	int rc = 0;
 	struct qce_device *pce_dev = (struct qce_device *) handle;
-	struct ablkcipher_request *areq = (struct ablkcipher_request *)
+	struct skcipher_request *areq = (struct skcipher_request *)
 						c_req->areq;
 	struct qce_cmdlist_info *cmdlistinfo = NULL;
 	int req_info = -1;
 	struct ce_sps_data *pce_sps_data;
 	struct ce_request_info *preq_info;
-
 	req_info = qce_alloc_req_info(pce_dev);
 	if (req_info < 0)
 		return -EBUSY;
@@ -5329,14 +5328,14 @@ int qce_ablk_cipher_req(void *handle, struct qce_req *c_req)
 	preq_info->dst_nents = 0;
 
 	/* cipher input */
-	preq_info->src_nents = count_sg(areq->src, areq->nbytes);
+	preq_info->src_nents = count_sg(areq->src, areq->cryptlen);
 
 	qce_dma_map_sg(pce_dev->pdev, areq->src, preq_info->src_nents,
 		(areq->src == areq->dst) ? DMA_BIDIRECTIONAL :
 							DMA_TO_DEVICE);
 	/* cipher output */
 	if (areq->src != areq->dst) {
-		preq_info->dst_nents = count_sg(areq->dst, areq->nbytes);
+		preq_info->dst_nents = count_sg(areq->dst, areq->cryptlen);
 			qce_dma_map_sg(pce_dev->pdev, areq->dst,
 				preq_info->dst_nents, DMA_FROM_DEVICE);
 	} else {
@@ -5361,10 +5360,10 @@ int qce_ablk_cipher_req(void *handle, struct qce_req *c_req)
 			qce_free_req_info(pce_dev, req_info, false);
 			return -EINVAL;
 		}
-		rc = _ce_setup_cipher(pce_dev, c_req, areq->nbytes, 0,
+		rc = _ce_setup_cipher(pce_dev, c_req, areq->cryptlen, 0,
 							cmdlistinfo);
 	} else {
-		rc = _ce_setup_cipher_direct(pce_dev, c_req, areq->nbytes, 0);
+		rc = _ce_setup_cipher_direct(pce_dev, c_req, areq->cryptlen, 0);
 	}
 	if (rc < 0)
 		goto bad;
@@ -5377,13 +5376,13 @@ int qce_ablk_cipher_req(void *handle, struct qce_req *c_req)
 
 	/* setup xfer type for producer callback handling */
 	preq_info->xfer_type = QCE_XFER_CIPHERING;
-	preq_info->req_len = areq->nbytes;
+	preq_info->req_len = areq->cryptlen;
 
 	_qce_sps_iovec_count_init(pce_dev, req_info);
 	if (pce_dev->support_cmd_dscr && cmdlistinfo)
 		_qce_sps_add_cmd(pce_dev, SPS_IOVEC_FLAG_LOCK, cmdlistinfo,
 					&pce_sps_data->in_transfer);
-	if (_qce_sps_add_sg_data(pce_dev, areq->src, areq->nbytes,
+	if (_qce_sps_add_sg_data(pce_dev, areq->src, areq->cryptlen,
 					&pce_sps_data->in_transfer))
 		goto bad;
 	_qce_set_flag(&pce_sps_data->in_transfer,
@@ -5394,10 +5393,10 @@ int qce_ablk_cipher_req(void *handle, struct qce_req *c_req)
 			&pce_sps_data->cmdlistptr.unlock_all_pipes,
 			&pce_sps_data->in_transfer);
 
-	if (_qce_sps_add_sg_data(pce_dev, areq->dst, areq->nbytes,
+	if (_qce_sps_add_sg_data(pce_dev, areq->dst, areq->cryptlen,
 					&pce_sps_data->out_transfer))
 		goto bad;
-	if (pce_dev->no_get_around || areq->nbytes <= SPS_MAX_PKT_SIZE) {
+	if (pce_dev->no_get_around || areq->cryptlen <= SPS_MAX_PKT_SIZE) {
 		pce_sps_data->producer_state = QCE_PIPE_STATE_COMP;
 		if (_qce_sps_add_data(
 				GET_PHYS_ADDR(pce_sps_data->result_dump),
@@ -5924,7 +5923,7 @@ static int __qce_get_device_tree_data(struct platform_device *pdev,
 							"crypto-base");
 	if (resource) {
 		pce_dev->phy_iobase = resource->start;
-		pce_dev->iobase = ioremap_nocache(resource->start,
+		pce_dev->iobase = ioremap(resource->start,
 					resource_size(resource));
 		if (!pce_dev->iobase) {
 			pr_err("Can not map CRYPTO io memory\n");

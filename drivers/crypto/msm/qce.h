@@ -3,6 +3,7 @@
  * QTI Crypto Engine driver API
  *
  * Copyright (c) 2010-2019, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #ifndef __CRYPTO_MSM_QCE_H
@@ -11,6 +12,7 @@
 #include <linux/types.h>
 #include <linux/platform_device.h>
 #include <linux/crypto.h>
+#include <crypto/skcipher.h>
 
 #include <crypto/algapi.h>
 #include <crypto/aes.h>
