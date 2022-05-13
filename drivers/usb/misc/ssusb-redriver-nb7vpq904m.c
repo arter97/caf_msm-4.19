@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
+ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
  * Copyright (c) 2018-2021, The Linux Foundation. All rights reserved.
  */
 
@@ -27,6 +28,11 @@
 #define FLAT_GAIN_REG_BASE		0x18
 #define OUT_COMP_AND_POL_REG_BASE	0x02
 #define LOSS_MATCH_REG_BASE		0x19
+
+#define AUX_SWITCH				0x09
+#define AUX_SBU_P				0x0
+#define AUX_SBU_N				0x1
+#define AUX_SBU_X				0x2
 
 /* Default Register Value */
 #define GEN_DEV_SET_REG_DEFAULT		0xFB
@@ -213,8 +219,10 @@ static void ssusb_redriver_gen_dev_set(
 {
 	int ret;
 	u8 val, oldval;
+	u8 aux_val;
 
 	val = 0;
+	aux_val = AUX_SBU_X;
 
 	switch (redriver->op_mode) {
 	case OP_MODE_USB:
@@ -247,6 +255,17 @@ static void ssusb_redriver_gen_dev_set(
 		/* Set to DP 4 Lane Mode (OP Mode 2) */
 		val |= (0x2 << OP_MODE_SHIFT);
 
+		if (redriver->typec_orientation == ORIENTATION_CC1)
+			aux_val = AUX_SBU_P;
+		else if (redriver->typec_orientation == ORIENTATION_CC2)
+			aux_val = AUX_SBU_N;
+		else {
+			dev_err(redriver->dev,
+				"can't get orientation, op mode %d\n",
+				redriver->op_mode);
+			goto err_exit;
+		}
+
 		break;
 	case OP_MODE_USB_AND_DP:
 		/* Enable channel A, B, C and D */
@@ -254,13 +273,17 @@ static void ssusb_redriver_gen_dev_set(
 		val |= (CHNC_EN | CHND_EN);
 
 		if (redriver->typec_orientation
-				== ORIENTATION_CC1)
+				== ORIENTATION_CC1) {
 			/* Set to DP 4 Lane Mode (OP Mode 1) */
 			val |= (0x1 << OP_MODE_SHIFT);
+			aux_val = AUX_SBU_P;
+		}
 		else if (redriver->typec_orientation
-				== ORIENTATION_CC2)
+				== ORIENTATION_CC2) {
 			/* Set to DP 4 Lane Mode (OP Mode 0) */
 			val |= (0x0 << OP_MODE_SHIFT);
+			aux_val = AUX_SBU_N;
+		}
 		else {
 			dev_err(redriver->dev,
 				"can't get orientation, op mode %d\n",
@@ -299,12 +322,25 @@ static void ssusb_redriver_gen_dev_set(
 		on ? "ENABLE":"DISABLE", val);
 
 	redriver->gen_dev_val = val;
+
+	ret = redriver_i2c_reg_set(redriver, AUX_SWITCH, aux_val);
+	if (ret < 0)
+		goto err_aux_exit;
+
+	dev_dbg(redriver->dev, "successfully ori(%d) set AUX, aux_val = 0x%x\n",
+		redriver->typec_orientation, aux_val);
+
 	return;
 
 err_exit:
 	dev_err(redriver->dev,
 		"failure to (%s) the redriver chip, reg 0x00 = 0x%x\n",
 		on ? "ENABLE":"DISABLE", val);
+
+err_aux_exit:
+	dev_err(redriver->dev,
+		"failure to (%s) set AUX val = 0x%x, aux_val = 0x%x\n",
+		on ? "ENABLE":"DISABLE", val, aux_val);
 }
 
 static void ssusb_redriver_config_work(struct work_struct *w)
