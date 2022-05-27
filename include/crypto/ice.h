@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2014-2020, 2021 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #ifndef _QCOM_INLINE_CRYPTO_ENGINE_H_
@@ -10,6 +11,7 @@
 #include <linux/cdev.h>
 #include <linux/atomic.h>
 #include <linux/wait.h>
+#include <uapi/crypto/ice.h>
 
 struct request;
 
