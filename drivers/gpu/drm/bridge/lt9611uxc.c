@@ -154,6 +154,7 @@ struct lt9611 {
 	u8 raw_sad[MAX_NUMBER_ADB * MAX_AUDIO_DATA_BLOCK_SIZE];
 };
 
+static int cont_splash_en;
 static int lt9611_read_edid(struct lt9611 *pdata);
 static int lt9611_get_edid_block(void *data, u8 *buf, unsigned int block,
 				  size_t len);
@@ -442,12 +443,9 @@ end:
 	return rc;
 }
 
-void lt9611_edid_work(struct work_struct *work)
+void lt9611_helper_read_edid(struct lt9611 *pdata)
 {
-	struct lt9611 *pdata = container_of(work, struct lt9611, edid_work);
 	struct cec_notifier *notify = pdata->cec_notifier;
-
-	pr_info("Reading edid.\n");
 
 	lt9611_read_edid(pdata);
 	pdata->edid = drm_do_get_edid(&pdata->connector,
@@ -463,6 +461,15 @@ void lt9611_edid_work(struct work_struct *work)
 	// Get new CEC physical address after EDID changed.
 	if (pdata->cec_support)
 		cec_notifier_set_phys_addr_from_edid(notify, pdata->edid);
+}
+
+void lt9611_edid_work(struct work_struct *work)
+{
+	struct lt9611 *pdata = container_of(work, struct lt9611, edid_work);
+
+	pr_info("Reading edid.\n");
+
+	lt9611_helper_read_edid(pdata);
 }
 
 void lt9611_cec_work(struct work_struct *work)
@@ -501,6 +508,7 @@ void lt9611_hpd_work(struct work_struct *work)
 
 	if (pdata->connector.status != connector_status_connected) {
 		pr_debug("release edid\n");
+		cont_splash_en = 0;
 		pdata->edid_complete = false;
 		kfree(pdata->edid);
 		pdata->edid = NULL;
@@ -1105,7 +1113,7 @@ static int lt9611_gpio_configure(struct lt9611 *pdata, bool on)
 			goto error;
 		}
 
-		ret = gpio_direction_output(pdata->reset_gpio, 0);
+		ret = gpio_direction_output(pdata->reset_gpio, 1);
 		if (ret) {
 			pr_err("lt9611 reset gpio direction failed\n");
 			goto reset_error;
@@ -1733,6 +1741,9 @@ lt9611_connector_detect(struct drm_connector *connector, bool force)
 		lt9611_ctl_disable(pdata);
 		mutex_unlock(&pdata->lock);
 		msleep(50);
+		if ((pdata->status == connector_status_connected)
+						&& !pdata->edid)
+			lt9611_helper_read_edid(pdata);
 	} else
 		pdata->status = connector_status_connected;
 
@@ -2116,7 +2127,8 @@ static void lt9611_bridge_pre_enable(struct drm_bridge *bridge)
 	struct lt9611 *pdata = bridge_to_lt9611(bridge);
 
 	pr_debug("bridge pre_enable\n");
-	lt9611_reset(pdata, true);
+	if (!cont_splash_en)
+		lt9611_reset(pdata, true);
 }
 
 static bool lt9611_bridge_mode_fixup(struct drm_bridge *bridge,
@@ -2443,8 +2455,8 @@ static int lt9611_probe(struct i2c_client *client,
 		pr_err("failed to enable vreg\n");
 		goto err_i2c_prog;
 	}
-
-	lt9611_reset(pdata, true);
+	if (!cont_splash_en)
+		lt9611_reset(pdata, true);
 
 	ret = lt9611_read_device_id(pdata);
 	if (ret) {
@@ -2619,6 +2631,9 @@ static void __exit lt9611_exit(void)
 	i2c_del_driver(&lt9611_driver);
 }
 
+module_param(cont_splash_en, int, 0600);
+MODULE_PARM_DESC(cont_splash_en,
+			"lt9611.cont_splash_en=1 or 0; where 1 represent enabled and 0 for disabled");
 module_init(lt9611_init);
 module_exit(lt9611_exit);
 
