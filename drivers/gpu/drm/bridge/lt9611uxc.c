@@ -2523,11 +2523,13 @@ static int lt9611_probe(struct i2c_client *client,
 		goto err_request_irq;
 	}
 
-	pdata->audio_pdev =
-		platform_device_register_simple("lt9611", -1, NULL, 0);
-	if (IS_ERR(pdata->audio_pdev)) {
-		dev_dbg(&client->dev,
+	if (pdata->audio_support) {
+		pdata->audio_pdev =
+			platform_device_register_simple("lt9611", -1, NULL, 0);
+		if (IS_ERR(pdata->audio_pdev)) {
+			dev_dbg(&client->dev,
 			"%s: Failed to register platform device\n", __func__);
+		}
 	}
 
 	return 0;
