@@ -3,6 +3,7 @@
  * QTI Inline Crypto Engine (ICE) driver
  *
  * Copyright (c) 2014-2020, 2021 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/module.h>
@@ -61,7 +62,14 @@
 
 #define ICE_FDE_KEY_INDEX 31
 
+#define MAX_PARTITION_LEN 32
+
 static int ice_fde_flag;
+
+static DEFINE_MUTEX(ioctl_lock);
+
+//Global variable to store the partition name
+static unsigned char *part_info;
 
 struct ice_clk_info {
 	struct list_head list;
@@ -573,6 +581,72 @@ err_dev:
 }
 
 /*
+ * Helper function to get the partition name from userspace
+ */
+static int __qcom_ice_get_partition_name(void __user *argp)
+{
+	int ret = 0;
+	unsigned char *partition_name = NULL;
+	struct partition_info part_name = {0};
+	ret = copy_from_user(&part_name, argp, sizeof(part_name));
+	if (ret) {
+		pr_err("copy_from_user failed\n");
+		goto free_buf;
+	}
+	if(part_name.len == 0 || part_name.len > MAX_PARTITION_LEN) {
+		pr_err("Invalid length for partition name");
+		return -EINVAL;
+	}
+	partition_name = kmalloc(part_name.len+1, GFP_KERNEL);
+	if (!partition_name) {
+		pr_err("Error allocating memory for partition name");
+		return -ENOMEM;
+	}
+	ret = copy_from_user(partition_name, part_name.partition_name, part_name.len+1);
+	if (ret) {
+		pr_err("copy_from_user failed\n");
+		goto free_buf;
+	}
+	if (!partition_name) {
+		pr_err("partition name cannot be null");
+		ret = -EINVAL;
+		goto free_buf;
+	}
+	strlcpy(part_info, partition_name, strlen(partition_name)+1);
+
+free_buf:
+	if(partition_name)
+		kzfree(partition_name);
+
+	return ret;
+}
+
+
+/*
+ * IOCTL for getting partition name
+ */
+static long ice_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
+{
+	int ret = 0;
+	void __user *argp = (void __user *)arg;
+	mutex_lock(&ioctl_lock);
+	switch(cmd)
+	{
+		case ICE_IOCTL_GET_PARTITION_NAME: {
+			ret = __qcom_ice_get_partition_name(argp);
+			break;
+		 }
+		default: {
+			pr_err("Invalid IOCTL: 0x%x\n", cmd);
+			ret = -EINVAL;
+			break;
+		 }
+	}
+	mutex_unlock(&ioctl_lock);
+	return ret;
+}
+
+/*
  * ICE HW instance can exist in UFS or eMMC based storage HW
  * Userspace does not know what kind of ICE it is dealing with.
  * Though userspace can find which storage device it is booting
@@ -582,6 +656,7 @@ err_dev:
  */
 static const struct file_operations qcom_ice_fops = {
 	.owner = THIS_MODULE,
+	.unlocked_ioctl = ice_ioctl
 };
 
 static int register_ice_device(struct ice_device *ice_dev)
@@ -648,6 +723,19 @@ exit_unreg_chrdev_region:
 	return rc;
 }
 
+static int qcom_ice_init_partition()
+{
+	int rc = 0;
+	part_info = kmalloc(MAX_PARTITION_LEN, GFP_KERNEL);
+	if(!part_info) {
+		pr_err("Error allocating memory for storing partition name\n");
+		rc = -ENOMEM;
+		return rc;
+	}
+	strlcpy(part_info, "userdata", strlen("userdata")+1);
+	return rc;
+}
+
 static int qcom_ice_probe(struct platform_device *pdev)
 {
 	struct ice_device *ice_dev;
@@ -708,6 +796,17 @@ static int qcom_ice_probe(struct platform_device *pdev)
 	platform_set_drvdata(pdev, ice_dev);
 	list_add_tail(&ice_dev->list, &ice_devices);
 
+	/*
+	 * Adding a function to initialize the partition to
+	 * be encrypted as userdata
+	 */
+	rc = qcom_ice_init_partition();
+	if(rc) {
+		pr_err("Unable to initialize the partition to be encyrpted\n");
+		goto out;
+	}
+
+
 	goto out;
 
 err_ice_dev:
@@ -733,6 +832,9 @@ static int qcom_ice_remove(struct platform_device *pdev)
 
 	list_del_init(&ice_dev->list);
 	kfree(ice_dev);
+
+	if (part_info)
+		kfree(part_info);
 
 	return 1;
 }
@@ -1294,7 +1396,7 @@ int qcom_ice_config_start(struct request *req,
 
 	if (ice_fde_flag && req->part && req->part->info
 				&& req->part->info->volname[0]) {
-		if (!strcmp(req->part->info->volname, "userdata")) {
+		if (!strcmp(req->part->info->volname, part_info)) {
 			sec_end = req->part->start_sect + req->part->nr_sects -
 					QCOM_UD_FOOTER_SECS;
 			if ((req->__sector >= req->part->start_sect) &&
