@@ -3,6 +3,7 @@
  * QTI crypto Driver
  *
  * Copyright (c) 2014-2019, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #ifndef __CRYPTO_MSM_QCEDEVI_H
@@ -28,7 +29,7 @@ enum qcedev_crypto_oper_type {
 struct qcedev_handle;
 
 struct qcedev_cipher_req {
-	struct ablkcipher_request creq;
+	struct skcipher_request creq;
 	void *cookie;
 };
 
