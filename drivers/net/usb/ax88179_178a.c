@@ -849,7 +849,7 @@ static int ax88179_set_eee(struct net_device *net, struct ethtool_eee *edata)
 /****************Start******************/
 int ioctl_signature(struct usbnet *dev, struct AX_IOCTL_COMMAND *info)
 {
-	strlcpy(info->sig, AX8817XX_SIGNATURE, strlen(AX8817XX_SIGNATURE));
+	strlcpy(info->sig, AX8817XX_SIGNATURE, sizeof(info->sig));
 	return 0;
 }
 
