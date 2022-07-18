@@ -24,4 +24,14 @@ config CAN_MCP25XXFD
 	  mcp25xxfd. To compilethis driver as a module, choose
 	  M here: the module will be called mcp25xxfd.
 
+config CAN_TCAN4X5X
+	tristate "Texas Instruments TCAN4X5X SPI CAN controllers"
+	depends on HAS_DMA
+	---help---
+	  Driver for the Texas Instruments TCAN4X5X SPI CAN controllers.
+config CAN_DBG_TCAN4X5X
+	tristate "Texas Instruments TCAN4X5X SPI CAN controllers"
+	depends on HAS_DMA
+	---help---
+	  Driver for the Texas Instruments TCAN4X5X SPI CAN controllers.
 endmenu
