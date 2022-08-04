@@ -1742,7 +1742,7 @@ lt9611_connector_detect(struct drm_connector *connector, bool force)
 		mutex_unlock(&pdata->lock);
 		msleep(50);
 		if ((pdata->status == connector_status_connected)
-						&& !pdata->edid)
+				&& !pdata->edid && cont_splash_en == 1)
 			lt9611_helper_read_edid(pdata);
 	} else
 		pdata->status = connector_status_connected;
