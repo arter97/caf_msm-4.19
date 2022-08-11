@@ -492,6 +492,7 @@ void lt9611_hpd_work(struct work_struct *work)
 	enum drm_connector_status last_status;
 	struct drm_device *dev = NULL;
 	struct lt9611 *pdata = container_of(work, struct lt9611, work);
+	long ret = 0;
 
 	if (!pdata || !pdata->connector.funcs ||
 		!pdata->connector.funcs->detect)
@@ -505,7 +506,21 @@ void lt9611_hpd_work(struct work_struct *work)
 	if (last_status == pdata->connector.status)
 		return;
 
-	if (pdata->connector.status != connector_status_connected) {
+	if (pdata->connector.status == connector_status_connected) {
+		if (!pdata->edid_status) {
+			ret = wait_event_timeout(pdata->edid_wq,
+					pdata->edid_complete,
+					msecs_to_jiffies(EDID_TIMEOUT_MS));
+			if (!ret)
+				pr_err("Timeout elapse for reading edid\n");
+		}
+
+		if (!pdata->edid) {
+			lt9611_read_edid(pdata);
+			pdata->edid = drm_do_get_edid(&pdata->connector,
+					lt9611_get_edid_block, pdata);
+		}
+	} else {
 		pr_debug("release edid\n");
 		cont_splash_en = 0;
 		pdata->edid_complete = false;
@@ -1889,34 +1904,7 @@ static int lt9611_connector_get_modes(struct drm_connector *connector)
 	struct lt9611 *pdata = connector_to_lt9611(connector);
 	struct drm_display_mode *mode, *m;
 	unsigned int count = 0;
-	long ret = 0;
 
-	mutex_lock(&pdata->lock);
-	if (pdata->pending_edid || pdata->edid_complete) {
-		pdata->pending_edid = false;
-		pdata->edid_complete = false;
-		mutex_unlock(&pdata->lock);
-		goto read_edid;
-	} else if (!pdata->edid_status && pdata->hpd_trigger) {
-		pdata->hpd_trigger = false;
-		mutex_unlock(&pdata->lock);
-		ret = wait_event_timeout(pdata->edid_wq, pdata->edid_complete,
-				msecs_to_jiffies(EDID_TIMEOUT_MS));
-		if (!ret)
-			goto skip_read_edid;
-	} else {
-		mutex_unlock(&pdata->lock);
-		goto skip_read_edid;
-	}
-
-read_edid:
-	if (!pdata->edid) {
-		lt9611_read_edid(pdata);
-		pdata->edid = drm_do_get_edid(connector,
-				lt9611_get_edid_block, pdata);
-	}
-
-skip_read_edid:
 	if (pdata->edid) {
 		if (pdata->cec_support) {
 			cec_notifier_set_phys_addr_from_edid(
@@ -2123,11 +2111,7 @@ err_dsi_device:
 
 static void lt9611_bridge_pre_enable(struct drm_bridge *bridge)
 {
-	struct lt9611 *pdata = bridge_to_lt9611(bridge);
-
 	pr_debug("bridge pre_enable\n");
-	if (!cont_splash_en)
-		lt9611_reset(pdata, true);
 }
 
 static bool lt9611_bridge_mode_fixup(struct drm_bridge *bridge,
