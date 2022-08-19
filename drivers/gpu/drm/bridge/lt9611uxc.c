@@ -153,6 +153,13 @@ static struct lt9611_timing_info lt9611_supp_timing_cfg[] = {
 	{0xffff, 0xffff, 0xff, 0xff, 0xff},
 };
 
+static int lt9611_init_connector_status(struct lt9611 *pdata){
+
+	pdata->connector.status = pdata->connector.funcs->detect(&pdata->connector, true);
+
+	return 0;
+}
+
 void lt9611_hpd_work(struct work_struct *work)
 {
 	char name[32], status[32];
@@ -1500,6 +1507,8 @@ static int lt9611_bridge_attach(struct drm_bridge *bridge)
 		return ret;
 	}
 
+	lt9611_init_connector_status(pdata);
+
 	drm_connector_helper_add(&pdata->connector,
 				 &lt9611_connector_helper_funcs);
 
@@ -1568,7 +1577,7 @@ static bool lt9611_bridge_mode_fixup(struct drm_bridge *bridge,
 	if (pdata->pm_wait_hpd)
 		fixup = false;
 
-	pr_info("bridge fixup(%d)\n", fixup);
+	pr_debug("bridge fixup(%d)\n", fixup);
 	return fixup;
 }
 
@@ -1869,7 +1878,7 @@ static int lt9611_resume(struct device *dev)
 	pr_info("lt9611uxc resume detect(%d)\n", connect);
 	if (connect == connector_status_connected)
 		pdata->pm_wait_hpd = false;
-
+	lt9611_init_connector_status(pdata);
 	queue_work(pdata->wq, &pdata->work);
 
 	return 0;
