@@ -128,6 +128,8 @@ struct lt9611 {
 	bool hdmi_mode;
 	bool hpd_support;
 	enum lt9611_fw_upgrade_status fw_status;
+
+	bool pm_wait_hpd;
 };
 
 struct lt9611_timing_info {
@@ -151,6 +153,13 @@ static struct lt9611_timing_info lt9611_supp_timing_cfg[] = {
 	{0xffff, 0xffff, 0xff, 0xff, 0xff},
 };
 
+static int lt9611_init_connector_status(struct lt9611 *pdata){
+
+	pdata->connector.status = pdata->connector.funcs->detect(&pdata->connector, true);
+
+	return 0;
+}
+
 void lt9611_hpd_work(struct work_struct *work)
 {
 	char name[32], status[32];
@@ -169,14 +178,27 @@ void lt9611_hpd_work(struct work_struct *work)
 	pdata->connector.status =
 		pdata->connector.funcs->detect(&pdata->connector, true);
 
-	if (last_status == pdata->connector.status)
+	/*
+	 * During suspend, HDMI plug out without interrupt,
+	 * then with new hotplug, last status = new status,
+	 * still need notify hotplug event.
+	 */
+	if ((last_status == pdata->connector.status) && (!pdata->pm_wait_hpd)) {
+		pr_info("hpd status(%d) wait(%d) return\n",
+			pdata->connector.status, pdata->pm_wait_hpd);
 		return;
+	}
+
+	if (pdata->connector.status == connector_status_connected) {
+		pr_debug("connected and reset pm flag\n");
+		pdata->pm_wait_hpd = false;
+	}
 
 	scnprintf(name, 32, "name=%s",
 		  pdata->connector.name);
 	scnprintf(status, 32, "status=%s",
 		  drm_get_connector_status_name(pdata->connector.status));
-	pr_debug("[%s]:[%s]\n", name, status);
+	pr_info("[%s]:[%s]\n", name, status);
 	envp[0] = name;
 	envp[1] = status;
 	envp[2] = event_string;
@@ -1485,6 +1507,8 @@ static int lt9611_bridge_attach(struct drm_bridge *bridge)
 		return ret;
 	}
 
+	lt9611_init_connector_status(pdata);
+
 	drm_connector_helper_add(&pdata->connector,
 				 &lt9611_connector_helper_funcs);
 
@@ -1547,7 +1571,14 @@ static bool lt9611_bridge_mode_fixup(struct drm_bridge *bridge,
 				  const struct drm_display_mode *mode,
 				  struct drm_display_mode *adjusted_mode)
 {
-	return true;
+	struct lt9611 *pdata = bridge_to_lt9611(bridge);
+	int fixup = true;
+
+	if (pdata->pm_wait_hpd)
+		fixup = false;
+
+	pr_debug("bridge fixup(%d)\n", fixup);
+	return fixup;
 }
 
 static void lt9611_bridge_post_disable(struct drm_bridge *bridge)
@@ -1761,6 +1792,8 @@ static int lt9611_probe(struct i2c_client *client,
 	pdata->bridge.funcs = &lt9611_bridge_funcs;
 	drm_bridge_add(&pdata->bridge);
 
+	pdata->pm_wait_hpd = false;
+
 	pdata->wq = create_singlethread_workqueue("lt9611_wk");
 	if (!pdata->wq) {
 		pr_err("Error creating lt9611 wq\n");
@@ -1824,6 +1857,37 @@ end:
 	return ret;
 }
 
+#ifdef CONFIG_PM_SLEEP
+static int lt9611_suspend(struct device *dev)
+{
+	struct lt9611 *pdata = dev_get_drvdata(dev);
+
+	pr_info("lt9611uxc suspend\n");
+
+	pdata->pm_wait_hpd = true;
+
+	return 0;
+}
+
+static int lt9611_resume(struct device *dev)
+{
+	struct lt9611 *pdata = dev_get_drvdata(dev);
+	int connect = 0;
+
+	connect = pdata->connector.funcs->detect(&pdata->connector, true);
+	pr_info("lt9611uxc resume detect(%d)\n", connect);
+	if (connect == connector_status_connected)
+		pdata->pm_wait_hpd = false;
+	lt9611_init_connector_status(pdata);
+	queue_work(pdata->wq, &pdata->work);
+
+	return 0;
+}
+
+static const struct dev_pm_ops lt9611_pm = {
+	SET_SYSTEM_SLEEP_PM_OPS(lt9611_suspend, lt9611_resume)
+};
+#endif
 
 static struct i2c_device_id lt9611_id[] = {
 	{ "lt,lt9611uxc", 0},
@@ -1840,6 +1904,9 @@ static struct i2c_driver lt9611_driver = {
 	.driver = {
 		.name = "lt9611",
 		.of_match_table = lt9611_match_table,
+#ifdef CONFIG_PM_SLEEP
+		.pm = &lt9611_pm,
+#endif
 	},
 	.probe = lt9611_probe,
 	.remove = lt9611_remove,
