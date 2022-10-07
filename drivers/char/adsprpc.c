@@ -1466,11 +1466,8 @@ static int context_alloc(struct fastrpc_file *fl, uint32_t kernel,
 
 	spin_lock(&fl->hlock);
 	hlist_add_head(&ctx->hn, &clst->pending);
-	if (!(fl->cid >= ADSP_DOMAIN_ID && fl->cid < NUM_CHANNELS)) {
-		err = -ECHRNG;
-		goto bail;
-	}
-	cid = fl->cid;
+	cid = (fl->cid >= ADSP_DOMAIN_ID && fl->cid < NUM_CHANNELS)
+			? fl->cid : 0;
 	chan = &me->channel[cid];
 	spin_unlock(&fl->hlock);
 
