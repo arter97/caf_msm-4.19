@@ -474,7 +474,7 @@ static int mcp25xxfd_can_open(struct net_device *net)
 {
 	struct mcp25xxfd_can_priv *cpriv = netdev_priv(net);
 	struct spi_device *spi = cpriv->priv->spi;
-	int ret;
+	int ret, mode;
 
 	ret = open_candev(net);
 	if (ret) {
@@ -523,10 +523,15 @@ static int mcp25xxfd_can_open(struct net_device *net)
 		goto out_canconfig;
 
 	/* switch to active mode */
-	ret = mcp25xxfd_can_switch_mode(cpriv->priv, &cpriv->regs.con,
-					(net->mtu == CAN_MTU) ?
-					MCP25XXFD_CAN_CON_MODE_CAN2_0 :
-					MCP25XXFD_CAN_CON_MODE_MIXED);
+	if (cpriv->can.ctrlmode & CAN_CTRLMODE_LOOPBACK)
+		mode = MCP25XXFD_CAN_CON_MODE_EXT_LOOPBACK;
+	else if (cpriv->can.ctrlmode & CAN_CTRLMODE_FD)
+		mode = MCP25XXFD_CAN_CON_MODE_MIXED;
+	else if (cpriv->can.ctrlmode & CAN_CTRLMODE_LISTENONLY)
+		mode = MCP25XXFD_CAN_CON_MODE_LISTENONLY;
+	else
+		mode = MCP25XXFD_CAN_CON_MODE_CAN2_0;
+	ret = mcp25xxfd_can_switch_mode(cpriv->priv, &cpriv->regs.con, mode);
 	if (ret)
 		goto out_int;
 
