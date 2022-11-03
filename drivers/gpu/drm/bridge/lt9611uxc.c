@@ -47,9 +47,13 @@
 #define CFG_CEC_INTERRUPTS BIT(2)
 #define CFG_VID_CHK_INTERRUPTS BIT(3)
 
-#define EDID_SEG_SIZE 256
 #define READ_BUF_MAX_SIZE 128
 #define WRITE_BUF_MAX_SIZE 128
+
+#define EDID_BASE_SIZE 128
+#define EDID_MAX_BLOCK 4
+#define EDID_SEG_SIZE (EDID_BASE_SIZE*EDID_MAX_BLOCK)
+
 #define EDID_TIMEOUT_MS 2000
 
 #define MAX_NUMBER_ADB 5
@@ -519,6 +523,11 @@ void lt9611_hpd_work(struct work_struct *work)
 			lt9611_read_edid(pdata);
 			pdata->edid = drm_do_get_edid(&pdata->connector,
 					lt9611_get_edid_block, pdata);
+
+			if (!drm_detect_hdmi_monitor(pdata->edid))
+				lt9611_change_to_dvi(pdata);
+			else
+				lt9611_change_to_hdmi(pdata);
 		}
 	} else {
 		pr_debug("release edid\n");
@@ -1350,6 +1359,7 @@ static irqreturn_t lt9611_irq_thread_handler(int irq, void *dev_id)
 			pdata->hpd_status = irq_status & BIT(1);
 			pdata->edid_status = irq_status & BIT(0);
 			pdata->cec_status = cec_status & BIT(7);
+
 			if (pdata->hpd_status)
 				pdata->hpd_trigger = true;
 			else
@@ -1401,8 +1411,22 @@ static irqreturn_t lt9611_irq_thread_handler(int irq, void *dev_id)
 
 	// If edid interrupted and edid ready,
 	// then call edid workqueue to get edid from LT9611.
-	if ((irq_type & BIT(0)) && pdata->edid_status)
-		queue_work(pdata->wq, &pdata->edid_work);
+	if ((irq_type & BIT(0)) && pdata->edid_status) {
+		if (!(pdata->pending_edid || pdata->edid_complete)) {
+			queue_work(pdata->wq, &pdata->edid_work);
+		} else {
+			if (pdata->edid) {
+				/*
+				 * Detect interface and setup registers when
+				 * EDID completed.
+				 */
+				if (!drm_detect_hdmi_monitor(pdata->edid))
+					lt9611_change_to_dvi(pdata);
+				else
+					lt9611_change_to_hdmi(pdata);
+			}
+		}
+	}
 
 	if (irq_type & BIT(1)) {
 		pr_debug("hpd changed\n");
@@ -1764,38 +1788,96 @@ lt9611_connector_detect(struct drm_connector *connector, bool force)
 	return pdata->status;
 }
 
+static bool lt9611_edid_ext_blk_completed(struct lt9611 *pdata)
+{
+	u8 edid_ext_blk_stat = 0;
+	bool ret = false;
+	int retry_cnt = 5;
+
+	while (retry_cnt > 0) {
+		msleep(200);
+		lt9611_ctl_en(pdata);
+		pr_info("Polling for ext blk received.\n");
+		// Switch to bank 0xB0 for reading edid status.
+		lt9611_write_byte(pdata, 0xFF, 0xB0);
+		lt9611_read(pdata, 0x2A, &edid_ext_blk_stat, 1);
+		if (edid_ext_blk_stat & BIT(2)) {
+			ret = true;
+			lt9611_ctl_disable(pdata);
+			break;
+		}
+		retry_cnt--;
+		lt9611_ctl_disable(pdata);
+	}
+	return ret;
+}
+
 static int lt9611_read_edid(struct lt9611 *pdata)
 {
 	u8 *buf = pdata->edid_buf;
-	int num = 0, num_of_edid_ext_blk = 0;
+	int num = 0;
+	bool require_pending_ext_blk = false;
+	u8 edid_ext_blk_stat = 0, num_edid_ext_blk = 0;
+	int ret;
 
 	mutex_lock(&pdata->lock);
-	lt9611_ctl_en(pdata);
-	lt9611_edid_en(pdata);
 
 	memset(buf, 0, EDID_SEG_SIZE);
+	lt9611_ctl_en(pdata);
+	lt9611_edid_en(pdata);
 	// Switch to bank 0xB0 for reading edid.
 	lt9611_write_byte(pdata, 0xFF, 0xB0);
-	for (num = 0; num < 2; num++) {
-		lt9611_write_byte(pdata, 0x0A, num * 128);
-		lt9611_read(pdata, 0xB0, buf + num * 128, 128);
-		if (num == 0) {
-			// Get no. of extension edid blocks from edid
-			//block[0][0x7e]
-			num_of_edid_ext_blk = buf[0x7e];
-			pdata->edid_with_ext_blk = true;
-			pdata->cec_support = true;
-			// If no extension blocks exist, stop reading edid.
-			if (num_of_edid_ext_blk == 0) {
-				pdata->edid_with_ext_blk = false;
-				pdata->cec_support = false;
-				break;
-			}
-		}
-	}
+	lt9611_read(pdata, 0x2A, &edid_ext_blk_stat, 1);
+	lt9611_write_byte(pdata, 0x0A, 0);
+	lt9611_read(pdata, 0xB0, buf, EDID_BASE_SIZE);
 
 	lt9611_edid_disable(pdata);
 	lt9611_ctl_disable(pdata);
+	/*
+	 * Get no. of extension edid blocks from edid
+	 * block[0][0x7e]
+	 */
+	num_edid_ext_blk = buf[0x7e] + 1;
+	require_pending_ext_blk = (num_edid_ext_blk > 2);
+	if (num_edid_ext_blk > EDID_MAX_BLOCK)
+		num_edid_ext_blk = EDID_MAX_BLOCK;
+
+	if (edid_ext_blk_stat == 0) {
+		require_pending_ext_blk = false;
+		num_edid_ext_blk = 2;
+	}
+	pdata->edid_with_ext_blk = (num_edid_ext_blk > 1);
+
+	for (num = 1; num < num_edid_ext_blk; num++) {
+		if (require_pending_ext_blk && (num >= 2) && ((num % 2) == 0)) {
+			pr_info("Wait for ext. EDID block completed.\n");
+
+			ret = lt9611_edid_ext_blk_completed(pdata);
+			if (!ret) {
+				pr_err("ret = %x, ext blk timeout.\n", ret);
+				goto end;
+			}
+		}
+		lt9611_ctl_en(pdata);
+		lt9611_edid_en(pdata);
+		pr_info("Reading EDID block %d.\n", num);
+		lt9611_write_byte(pdata, 0xFF, 0xB0);
+		lt9611_write_byte(pdata, 0x0A, (num % 2) * EDID_BASE_SIZE);
+		lt9611_read(pdata, 0xB0, buf + (num * EDID_BASE_SIZE),
+			EDID_BASE_SIZE);
+		if (require_pending_ext_blk && ((num % 2) == 1)) {
+			/*
+			 * Reset bit[2] = 0 to notify LT9611UXC
+			 * read next EDID block.
+			 */
+			edid_ext_blk_stat &= (~BIT(2));
+			lt9611_write_byte(pdata, 0x2A, edid_ext_blk_stat);
+		}
+		lt9611_edid_disable(pdata);
+		lt9611_ctl_disable(pdata);
+	}
+
+end:
 	mutex_unlock(&pdata->lock);
 
 	return 0;
@@ -2151,7 +2233,7 @@ static ssize_t dump_info_store(struct device *dev,
 		return -EINVAL;
 	}
 
-	for (num = 0; num < 2; num++) {
+	for (num = 0; num < EDID_MAX_BLOCK; num++) {
 		print_hex_dump(KERN_WARNING,
 				"", DUMP_PREFIX_NONE, 16, 1,
 				pdata->edid_buf + num * 128,
