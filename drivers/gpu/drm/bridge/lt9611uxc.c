@@ -451,9 +451,8 @@ void lt9611_helper_read_edid(struct lt9611 *pdata)
 	pdata->edid = drm_do_get_edid(&pdata->connector,
 			lt9611_get_edid_block, pdata);
 
-	// Change interface after we get new edid.
-	// DVI interface don't have extension block
-	if (!pdata->edid_with_ext_blk)
+	// Detect interface and setup registers after we get new edid.
+	if (!drm_detect_hdmi_monitor(pdata->edid))
 		lt9611_change_to_dvi(pdata);
 	else
 		lt9611_change_to_hdmi(pdata);
