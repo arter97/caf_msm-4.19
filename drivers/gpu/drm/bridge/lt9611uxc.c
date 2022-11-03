@@ -1349,15 +1349,6 @@ static irqreturn_t lt9611_irq_thread_handler(int irq, void *dev_id)
 
 	msleep(50);
 
-	if (cec_msg_status & BIT(0)) {
-		cec_transmit_attempt_done(pdata->cec_adapter, CEC_TX_STATUS_OK);
-		pr_debug("CEC_TX_STATUS_OK\n");
-	} else if (cec_msg_status & BIT(2)) {
-		cec_transmit_attempt_done(pdata->cec_adapter,
-					CEC_TX_STATUS_NACK);
-		pr_debug("CEC_TX_STATUS_NACK\n");
-	}
-
 	if (!pdata->bridge_attach) {
 		if (pdata->edid_status)
 			pdata->pending_edid = true;
@@ -1371,6 +1362,15 @@ static irqreturn_t lt9611_irq_thread_handler(int irq, void *dev_id)
 		if (!pdata->edid_status)
 			pdata->edid_complete = false;
 		mutex_unlock(&pdata->lock);
+	}
+
+	if (cec_msg_status & BIT(0)) {
+		cec_transmit_attempt_done(pdata->cec_adapter, CEC_TX_STATUS_OK);
+		pr_debug("CEC_TX_STATUS_OK\n");
+	} else if (cec_msg_status & BIT(2)) {
+		cec_transmit_attempt_done(pdata->cec_adapter,
+					CEC_TX_STATUS_NACK);
+		pr_debug("CEC_TX_STATUS_NACK\n");
 	}
 
 	if (!pdata->hpd_status && (irq_type & BIT(1))) {
