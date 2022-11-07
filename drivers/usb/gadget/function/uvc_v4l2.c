@@ -231,15 +231,12 @@ static int
 uvc_v4l2_subscribe_event(struct v4l2_fh *fh,
 			 const struct v4l2_event_subscription *sub)
 {
-	struct uvc_device *uvc = video_get_drvdata(fh->vdev);
 	int ret;
 
 	if (sub->type < UVC_EVENT_FIRST || sub->type > UVC_EVENT_LAST)
 		return -EINVAL;
 
 	ret = v4l2_event_subscribe(fh, sub, 2, NULL);
-	if (!ret && sub->type == UVC_EVENT_UNBIND)
-		uvc->wait_for_close = true;
 
 	return ret;
 }
@@ -297,6 +294,11 @@ uvc_v4l2_open(struct file *file)
 	if (handle == NULL)
 		return -ENOMEM;
 
+	if (uvc->ref_count > 0)
+		return -EPERM;
+
+	uvc->ref_count++;
+	uvc->wait_for_close = true;
 	v4l2_fh_init(&handle->vfh, vdev);
 	v4l2_fh_add(&handle->vfh);
 
@@ -326,6 +328,8 @@ uvc_v4l2_release(struct file *file)
 	v4l2_fh_del(&handle->vfh);
 	v4l2_fh_exit(&handle->vfh);
 	kfree(handle);
+	uvc->ref_count--;
+	complete(&uvc->unbind_ok);
 
 	return 0;
 }
