@@ -9,6 +9,7 @@
 
 #include <linux/clk.h>
 #include <linux/debugfs.h>
+#include <linux/gpio/driver.h>
 #include <linux/mutex.h>
 #include <linux/regulator/consumer.h>
 #include <linux/spi/spi.h>
@@ -23,9 +24,12 @@ enum mcp25xxfd_model {
 	CAN_MCP2518FD	= 0x2518,
 };
 
+struct mcp25xxfd_can_priv;
 struct mcp25xxfd_priv {
 	struct spi_device *spi;
 	struct clk *clk;
+	struct gpio_chip gpio;
+	struct mcp25xxfd_can_priv *cpriv;
 
 	/* the actual model of the mcp25xxfd */
 	enum mcp25xxfd_model model;
@@ -40,6 +44,9 @@ struct mcp25xxfd_priv {
 		int clock_pll;
 		int clock_div2;
 		int clock_odiv;
+		/* gpio related */
+		bool gpio_open_drain;
+		bool gpio0_xstandby;
 	} config;
 
 	/* lock for enabling/disabling the clock */
@@ -74,6 +81,10 @@ struct mcp25xxfd_priv {
 #if defined(CONFIG_DEBUG_FS)
 	struct dentry *debugfs_dir;
 	struct dentry *debugfs_regs_dir;
+	struct {
+		u64 spi_crc_read;
+		u64 spi_crc_read_split;
+	} stats;
 #endif
 };
 
