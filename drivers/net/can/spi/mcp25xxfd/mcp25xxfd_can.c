@@ -60,6 +60,7 @@
 #include "mcp25xxfd_int.h"
 #include "mcp25xxfd_priv.h"
 #include "mcp25xxfd_regs.h"
+#include "mcp25xxfd_gpio.h"
 
 #include <uapi/linux/can/netlink.h>
 
@@ -509,6 +510,9 @@ static int mcp25xxfd_can_open(struct net_device *net)
 	if (ret)
 		goto out_transceiver;
 
+	/* configure gpio */
+	g_mcp25xxfd_gpio_direction_output(&cpriv->priv->gpio, 0, 0);
+
 	/* configure controller for reception */
 	ret = mcp25xxfd_can_config(net);
 	if (ret)
@@ -570,6 +574,9 @@ static int mcp25xxfd_can_stop(struct net_device *net)
 	struct mcp25xxfd_can_priv *cpriv = netdev_priv(net);
 	struct mcp25xxfd_priv *priv = cpriv->priv;
 	struct spi_device *spi = priv->spi;
+
+	/* configure gpio */
+	g_mcp25xxfd_gpio_direction_output(&cpriv->priv->gpio, 0, 1);
 
 	/* disable inerrupts on controller */
 	mcp25xxfd_int_enable(cpriv->priv, false);

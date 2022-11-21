@@ -161,6 +161,12 @@ static int mcp25xxfd_gpio_direction_output(struct gpio_chip *chip,
 					mask_pm | mask_stby);
 }
 
+int g_mcp25xxfd_gpio_direction_output(struct gpio_chip *chip,
+				      unsigned int offset, int value)
+{
+	return mcp25xxfd_gpio_direction_output(chip, offset, value);
+}
+
 #ifdef CONFIG_OF_DYNAMIC
 static void mcp25xxfd_gpio_read_of(struct mcp25xxfd_priv *priv)
 {
