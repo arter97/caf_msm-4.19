@@ -451,9 +451,8 @@ void lt9611_helper_read_edid(struct lt9611 *pdata)
 	pdata->edid = drm_do_get_edid(&pdata->connector,
 			lt9611_get_edid_block, pdata);
 
-	// Change interface after we get new edid.
-	// DVI interface don't have extension block
-	if (!pdata->edid_with_ext_blk)
+	// Detect interface and setup registers after we get new edid.
+	if (!drm_detect_hdmi_monitor(pdata->edid))
 		lt9611_change_to_dvi(pdata);
 	else
 		lt9611_change_to_hdmi(pdata);
@@ -1350,15 +1349,6 @@ static irqreturn_t lt9611_irq_thread_handler(int irq, void *dev_id)
 
 	msleep(50);
 
-	if (cec_msg_status & BIT(0)) {
-		cec_transmit_attempt_done(pdata->cec_adapter, CEC_TX_STATUS_OK);
-		pr_debug("CEC_TX_STATUS_OK\n");
-	} else if (cec_msg_status & BIT(2)) {
-		cec_transmit_attempt_done(pdata->cec_adapter,
-					CEC_TX_STATUS_NACK);
-		pr_debug("CEC_TX_STATUS_NACK\n");
-	}
-
 	if (!pdata->bridge_attach) {
 		if (pdata->edid_status)
 			pdata->pending_edid = true;
@@ -1372,6 +1362,15 @@ static irqreturn_t lt9611_irq_thread_handler(int irq, void *dev_id)
 		if (!pdata->edid_status)
 			pdata->edid_complete = false;
 		mutex_unlock(&pdata->lock);
+	}
+
+	if (cec_msg_status & BIT(0)) {
+		cec_transmit_attempt_done(pdata->cec_adapter, CEC_TX_STATUS_OK);
+		pr_debug("CEC_TX_STATUS_OK\n");
+	} else if (cec_msg_status & BIT(2)) {
+		cec_transmit_attempt_done(pdata->cec_adapter,
+					CEC_TX_STATUS_NACK);
+		pr_debug("CEC_TX_STATUS_NACK\n");
 	}
 
 	if (!pdata->hpd_status && (irq_type & BIT(1))) {

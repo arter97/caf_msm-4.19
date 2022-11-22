@@ -136,6 +136,7 @@ struct uvc_device {
 
 	bool wait_for_close;
 	struct completion unbind_ok;
+	unsigned int ref_count;
 };
 
 static inline struct uvc_device *to_uvc(struct usb_function *f)

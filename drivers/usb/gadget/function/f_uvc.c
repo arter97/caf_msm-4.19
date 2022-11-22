@@ -425,10 +425,7 @@ static DEVICE_ATTR_RO(function_name);
 
 static void uvc_video_device_release(struct video_device *vdev)
 {
-	struct uvc_device *uvc = container_of(vdev, struct uvc_device, vdev);
-
 	memset(vdev, 0, sizeof(*vdev));
-	complete(&uvc->unbind_ok);
 }
 
 static int
