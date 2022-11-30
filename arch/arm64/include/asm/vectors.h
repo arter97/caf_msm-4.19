@@ -9,6 +9,7 @@
 #include <linux/percpu.h>
 
 #include <asm/fixmap.h>
+#include <asm/mmu.h>
 
 extern char vectors[];
 extern char tramp_vectors[];
@@ -32,6 +33,12 @@ enum arm64_bp_harden_el1_vectors {
 	 * canonical vectors.
 	 */
 	EL1_VECTOR_BHB_FW,
+
+	/*
+	 * Use the ClearBHB instruction, before branching to the canonical
+	 * vectors.
+	 */
+	EL1_VECTOR_BHB_CLEAR_INSN,
 #endif /* CONFIG_MITIGATE_SPECTRE_BRANCH_HISTORY */
 
 	/*
@@ -39,6 +46,12 @@ enum arm64_bp_harden_el1_vectors {
 	 */
 	EL1_VECTOR_KPTI,
 };
+
+#ifndef CONFIG_MITIGATE_SPECTRE_BRANCH_HISTORY
+#define EL1_VECTOR_BHB_LOOP		-1
+#define EL1_VECTOR_BHB_FW		-1
+#define EL1_VECTOR_BHB_CLEAR_INSN	-1
+#endif /* !CONFIG_MITIGATE_SPECTRE_BRANCH_HISTORY */
 
 /* The vectors to use on return from EL0. e.g. to remap the kernel */
 DECLARE_PER_CPU_READ_MOSTLY(const char *, this_cpu_vector);
