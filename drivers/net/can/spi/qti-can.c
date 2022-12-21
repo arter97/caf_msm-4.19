@@ -146,6 +146,10 @@ struct spi_miso { /* TLV for MISO line */
 #define IOCTL_END_FW_UPDATE_FILE	(SIOCDEVPRIVATE + 14)
 
 #define IFR_DATA_OFFSET		0x100
+
+/* AUTO platform specific compile time flag */
+#define PLATFORM_TARGET_AUTO    1
+
 struct can_fw_resp {
 	u8 maj;
 	u8 min : 4;
@@ -730,7 +734,7 @@ static int qti_can_query_firmware_version(struct qti_can *priv_data)
 
 	return ret;
 }
-
+#ifndef PLATFORM_TARGET_AUTO
 static int qti_can_notify_power_events(struct qti_can *priv_data, u8 event_type)
 {
 	char *tx_buf, *rx_buf;
@@ -754,7 +758,7 @@ static int qti_can_notify_power_events(struct qti_can *priv_data, u8 event_type)
 
 	return ret;
 }
-
+#endif
 static int qti_can_set_bitrate(struct net_device *netdev)
 {
 	char *tx_buf, *rx_buf;
@@ -1734,6 +1738,7 @@ static int qti_can_remove(struct spi_device *spi)
 }
 
 #ifdef CONFIG_PM
+#ifndef PLATFORM_TARGET_AUTO
 static int qti_can_suspend(struct device *dev)
 {
 	struct spi_device *spi = to_spi_device(dev);
@@ -1779,7 +1784,41 @@ static int qti_can_resume(struct device *dev)
 
 	return ret;
 }
+#else
+static int qti_can_suspend(struct device *dev)
+{
+	struct spi_device *spi = to_spi_device(dev);
+	struct qti_can *priv_data = NULL;
+	int ret = 0;
 
+	if (spi) {
+		priv_data = spi_get_drvdata(spi);
+	} else {
+		ret = -1;
+	}
+
+	return ret;
+}
+
+static int qti_can_resume(struct device *dev)
+{
+	struct spi_device *spi = to_spi_device(dev);
+	struct qti_can *priv_data = NULL;
+	int ret = 0;
+
+	if (spi) {
+		priv_data = spi_get_drvdata(spi);
+		disable_irq_wake(spi->irq);
+	} else {
+		ret = -1;
+	}
+
+	if (priv_data)
+		qti_can_rx_message(priv_data);
+
+	return ret;
+}
+#endif
 static const struct dev_pm_ops qti_can_dev_pm_ops = {
 	.suspend	= qti_can_suspend,
 	.resume		= qti_can_resume,
