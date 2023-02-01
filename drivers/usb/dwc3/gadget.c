@@ -232,7 +232,7 @@ int dwc3_gadget_resize_tx_fifos(struct dwc3 *dwc, struct dwc3_ep *dep)
 
 	if ((dep->endpoint.maxburst > 6) &&
 			usb_endpoint_xfer_isoc(dep->endpoint.desc))
-		mult = 6;
+		mult = 8;
 
 	tmp = ((max_packet + mdwidth) * mult) + mdwidth;
 	fifo_size = DIV_ROUND_UP(tmp, mdwidth);
@@ -1554,7 +1554,7 @@ static void __dwc3_gadget_start_isoc(struct dwc3_ep *dep)
 				max_t(u32, 16, 2 * dep->interval);
 
 	/* align uf to ep interval */
-	dep->frame_number = (wraparound_bits | dep->frame_number) &
+	dep->frame_number = (wraparound_bits + dep->frame_number) &
 				~(dep->interval - 1);
 
 	__dwc3_gadget_kick_transfer(dep);
@@ -3030,7 +3030,7 @@ static void dwc3_gadget_endpoint_transfer_in_progress(struct dwc3_ep *dep,
 		status = -EXDEV;
 
 		dep->missed_isoc_packets++;
-		dbg_event(dep->number, "MISSEDISOC", 0);
+		dbg_event(dep->number, "MISSEDISOC", dep->missed_isoc_packets);
 	}
 
 	dwc3_gadget_ep_cleanup_completed_requests(dep, event, status);
