@@ -516,6 +516,8 @@ static int qti_can_process_response(struct qti_can *priv_data,
 		ret |= (fw_resp->maj & 0xF) << 8;
 		ret |= (fw_resp->min & 0xF) << 4;
 		ret |= (fw_resp->sub_min & 0xF);
+		/* Save the firmware version string for the applications */
+		memcpy(g_fw_str, fw_resp, sizeof(struct can_fw_resp));
 	} else if (resp->cmd == CMD_UPDATE_TIME_INFO) {
 		struct can_time_info *time_data =
 			(struct can_time_info *)resp->data;
