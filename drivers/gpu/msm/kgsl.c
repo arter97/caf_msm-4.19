@@ -2733,8 +2733,25 @@ static int kgsl_setup_dmabuf_useraddr(struct kgsl_device *device,
 
 		/* Look for the fd that matches this the vma file */
 		fd = iterate_fd(current->files, 0, match_file, vma->vm_file);
-		if (fd != 0)
+		if (fd) {
 			dmabuf = dma_buf_get(fd - 1);
+			if (IS_ERR(dmabuf)) {
+				up_read(&current->mm->mmap_sem);
+				return PTR_ERR(dmabuf);
+			}
+			/*
+			 * It is possible that the fd obtained from iterate_fd
+			 * was closed before passing the fd to dma_buf_get().
+			 * Hence dmabuf returned by dma_buf_get() could be
+			 * different from vma->vm_file->private_data. Return
+			 * failure if this happens.
+			 */
+			if (dmabuf != vma->vm_file->private_data) {
+				dma_buf_put(dmabuf);
+				up_read(&current->mm->mmap_sem);
+				return -EBADF;
+			}
+		}
 	}
 
 	if (IS_ERR_OR_NULL(dmabuf)) {
