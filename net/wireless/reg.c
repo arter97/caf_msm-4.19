@@ -2361,14 +2361,9 @@ static void handle_band_custom(struct wiphy *wiphy,
 	if (!sband)
 		return;
 
-	/*
-	 * We currently assume that you always want at least 20 MHz,
-	 * otherwise channel 12 might get enabled if this rule is
-	 * compatible to US, which permits 2402 - 2472 MHz.
-	 */
 	for (i = 0; i < sband->n_channels; i++)
 		handle_channel_custom(wiphy, &sband->channels[i], regd,
-				      MHZ_TO_KHZ(20));
+				      MHZ_TO_KHZ(5));
 }
 
 /* Used by drivers prior to wiphy registration */
