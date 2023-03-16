@@ -24,6 +24,9 @@
  * Valentin Raevsky <valentin@compulab.co.il>
  * Philippe Schenker <philippe.schenker@toradex.com>
  */
+/*
+ * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ */
 
 #include <linux/bits.h>
 #include <linux/clk.h>
@@ -427,11 +430,13 @@ static void sn65dsi83_pre_enable(struct drm_bridge *bridge)
 	 * Reset the chip, pull EN line low for t_reset=10ms,
 	 * then high for t_en=1ms.
 	 */
+	dev_info(ctx->dev, "pre enable \n");
 	regcache_mark_dirty(ctx->regmap);
+	regulator_enable(ctx->vdd_en);
+	usleep_range(10000, 11000);
 	gpiod_set_value(ctx->enable_gpio, 0);
 	usleep_range(10000, 11000);
 	gpiod_set_value(ctx->enable_gpio, 1);
-	regulator_enable(ctx->vdd_en);
 	usleep_range(1000, 1100);
 }
 
@@ -500,7 +505,7 @@ static void sn65dsi83_enable(struct drm_bridge *bridge)
 	u16 val;
 	int ret;
 
-	dev_info(ctx->dev, "enable with test pattern \n");
+	dev_info(ctx->dev, "enable \n");
 	/* Clear reset, disable PLL */
 	regmap_write(ctx->regmap, REG_RC_RESET, 0x00);
 	regmap_write(ctx->regmap, REG_RC_PLL_EN, 0x00);
@@ -553,8 +558,7 @@ static void sn65dsi83_enable(struct drm_bridge *bridge)
 	regmap_write(ctx->regmap, REG_LVDS_LANE,
 		(ctx->lvds_dual_link_even_odd_swap ?
 		 REG_LVDS_LANE_EVEN_ODD_SWAP : 0) |
-		REG_LVDS_LANE_CHA_LVDS_TERM |
-		REG_LVDS_LANE_CHB_LVDS_TERM|REG_LVDS_LANE_CHA_REVERSE_LVDS);
+		REG_LVDS_LANE_CHA_REVERSE_LVDS);
 	regmap_write(ctx->regmap, REG_LVDS_CM, 0x00);
 
 	val = cpu_to_le16(ctx->mode.hdisplay);
@@ -580,7 +584,6 @@ static void sn65dsi83_enable(struct drm_bridge *bridge)
 		     ctx->mode.hsync_start - ctx->mode.hdisplay);
 	regmap_write(ctx->regmap, REG_VID_CHA_VERTICAL_FRONT_PORCH,
 		     ctx->mode.vsync_start - ctx->mode.vdisplay);
-	regmap_write(ctx->regmap, REG_VID_CHA_TEST_PATTERN, 0x8);
 
 	/* Enable PLL */
 	regmap_write(ctx->regmap, REG_RC_PLL_EN, REG_RC_PLL_EN_PLL_EN);
