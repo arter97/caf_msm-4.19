@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /* Copyright (c) 2015-2020, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
  *
 */
+
+/*
+ * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ */
 
 #include <linux/interrupt.h>
 #include <linux/module.h>
@@ -41,13 +44,15 @@
 #define DRIVER_MODE_RAW_FRAMES		0
 #define DRIVER_MODE_PROPERTIES		1
 #define DRIVER_MODE_AMB			2
-#define QUERY_FIRMWARE_TIMEOUT_MS	100
+#define QUERY_FIRMWARE_TIMEOUT_MS	150
+#define MCU_SUSPEND_DELAY_MS		100
 #define EUPGRADE			140
 #define QTIMER_DIV				192
 #define QTIMER_MUL				10000
 #define TIME_OFFSET_MAX_THD		30
 #define TIME_OFFSET_MIN_THD		-30
 #define TIMESTAMP_PRINT_CNTR	10
+#define WAKELOCK_TIMEOUT	5000
 
 static int checksum_enable;
 
@@ -71,12 +76,16 @@ struct qti_can {
 	int bits_per_word;
 	int reset_delay_msec;
 	int reset;
+	int tx_gpio;
 	bool support_can_fd;
 	bool use_qtimer;
 	bool can_fw_cmd_timeout_req;
 	u32 rem_all_buffering_timeout_ms;
 	u32 can_fw_cmd_timeout_ms;
 	s64 time_diff;
+	int mcu_pwr_state;
+	int mcu_suspend_delay;
+	struct wakeup_source *ws;
 };
 
 struct qti_can_netdev_privdata {
@@ -118,6 +127,8 @@ struct spi_miso { /* TLV for MISO line */
 #define CMD_CAN_DATA_BUFF_REMOVE_ALL	0x8A
 #define CMD_PROPERTY_WRITE		0x8B
 #define CMD_PROPERTY_READ		0x8C
+#define CMD_MCU_POWER_STATE		0x8D
+#define CMD_AP_POWEROFF_EVENT		0x8E
 #define CMD_GET_FW_BR_VERSION		0x95
 #define CMD_BEGIN_FIRMWARE_UPGRADE	0x96
 #define CMD_FIRMWARE_UPGRADE_DATA	0x97
@@ -198,6 +209,11 @@ struct can_config_bit_timing {
 struct can_time_info {
 	__le64 time;
 } __packed;
+
+struct mcu_power_state {
+       u8 cur_state;
+} __packed;
+
 
 static struct can_bittiming_const rh850_bittiming_const = {
 	.name = "qti_can",
@@ -289,6 +305,8 @@ static irqreturn_t qti_can_irq(int irq, void *priv)
 	struct qti_can *priv_data = priv;
 
 	LOGDI("%s\n", __func__);
+	/* Reset MCU State */
+	priv_data->mcu_pwr_state = 0;
 	qti_can_rx_message(priv_data);
 	return IRQ_HANDLED;
 }
@@ -461,7 +479,12 @@ static int qti_can_process_response(struct qti_can *priv_data,
 		} else {
 			qti_can_receive_property(priv_data, property);
 		}
-	} else if (resp->cmd  == CMD_GET_FW_VERSION) {
+	} else if (resp->cmd == CMD_MCU_POWER_STATE) {
+		struct mcu_power_state *mcu_state =
+				(struct mcu_power_state *)&resp->data;
+		 priv_data->mcu_pwr_state = 1;
+		 dev_err(&priv_data->spidev->dev, "MCU State %d ",mcu_state->cur_state);
+        } else if (resp->cmd  == CMD_GET_FW_VERSION) {
 		fw_resp = (struct can_fw_resp *)resp->data;
 		if (fw_resp->maj > 4 || (fw_resp->maj == 4 && fw_resp->min) ||
 		    (fw_resp->maj == 4 && fw_resp->sub_min > 4)) {
@@ -634,6 +657,11 @@ static int qti_can_do_spi_transaction(struct qti_can *priv_data)
 	}
 
 	spi_message_init(msg);
+	if (priv_data->tx_gpio && priv_data->mcu_pwr_state == 1) {
+	      dev_info(&priv_data->spidev->dev, "MCU State %d GPIO Trigger High",priv_data->mcu_pwr_state);
+	      gpio_direction_output(priv_data->tx_gpio, 1);
+	      msleep(priv_data->mcu_suspend_delay);
+	}
 	spi_message_add_tail(xfer, msg);
 	xfer->tx_buf = priv_data->tx_buf;
 	xfer->rx_buf = priv_data->rx_buf;
@@ -652,6 +680,11 @@ static int qti_can_do_spi_transaction(struct qti_can *priv_data)
 		checksum_rx_len = XFER_BUFFER_SIZE - 2;
 	} else {
 		checksum_rx_len = (priv_data->rx_buf[1]) + 4;
+	}
+	if (priv_data->tx_gpio && priv_data->mcu_pwr_state == 1) {
+	      dev_info(&priv_data->spidev->dev, "MCU State %d GPIO Trigger Low",priv_data->mcu_pwr_state);
+	      gpio_direction_output(priv_data->tx_gpio, 0);
+	      priv_data->mcu_pwr_state = 0;
 	}
 
 	if (ret == 0 && checksum_enable) {
@@ -734,7 +767,7 @@ static int qti_can_query_firmware_version(struct qti_can *priv_data)
 
 	return ret;
 }
-#ifndef PLATFORM_TARGET_AUTO
+
 static int qti_can_notify_power_events(struct qti_can *priv_data, u8 event_type)
 {
 	char *tx_buf, *rx_buf;
@@ -758,7 +791,7 @@ static int qti_can_notify_power_events(struct qti_can *priv_data, u8 event_type)
 
 	return ret;
 }
-#endif
+
 static int qti_can_set_bitrate(struct net_device *netdev)
 {
 	char *tx_buf, *rx_buf;
@@ -1614,6 +1647,23 @@ static int qti_can_probe(struct spi_device *spi)
 		msleep(priv_data->reset_delay_msec);
 	}
 
+
+	priv_data->tx_gpio = of_get_named_gpio(spi->dev.of_node,
+					     "qcom,tx-gpio", 0);
+
+	if (gpio_is_valid(priv_data->tx_gpio)) {
+		err = gpio_request(priv_data->tx_gpio, "qti-can-txgpio");
+		if (err < 0) {
+			LOGDE("failed to request gpio %d: %d\n",
+			      priv_data->tx_gpio, err);
+			return err;
+		}
+		gpio_direction_output(priv_data->tx_gpio, 0);
+	}
+
+	/* After AP boots, Expect MCU should be suspend */
+	priv_data->mcu_pwr_state = 1;
+	priv_data->mcu_suspend_delay = 0;
 	priv_data->support_can_fd = of_property_read_bool(spi->dev.of_node,
 							  "support-can-fd");
 
@@ -1662,6 +1712,8 @@ static int qti_can_probe(struct spi_device *spi)
 	}
 	dev_info(dev, "Request irq %d ret %d\n", spi->irq, err);
 
+	priv_data->ws = wakeup_source_register(dev, "qtcan-client");
+
 	/* Allocate memory for global firmware structure */
 	g_fw_str = kzalloc(sizeof(struct can_fw_resp), GFP_KERNEL);
 	if (!g_fw_str) {
@@ -1685,6 +1737,8 @@ static int qti_can_probe(struct spi_device *spi)
 		retry++;
 	}
 
+	/* This should less than MCU FW Timeout */
+	priv_data->mcu_suspend_delay = MCU_SUSPEND_DELAY_MS;
 	if (query_err) {
 		LOGDE("QTI CAN probe failed\n");
 		err = -ENODEV;
@@ -1707,6 +1761,8 @@ cleanup_candev:
 		}
 		if (priv_data->tx_wq)
 			destroy_workqueue(priv_data->tx_wq);
+
+		wakeup_source_unregister(priv_data->ws);
 		devm_kfree(dev, priv_data->rx_buf);
 		devm_kfree(dev, priv_data->tx_buf);
 		devm_kfree(dev, priv_data->assembly_buffer);
@@ -1714,6 +1770,20 @@ cleanup_candev:
 		devm_kfree(dev, priv_data);
 	}
 	return err;
+}
+
+static void qti_can_shutdown(struct spi_device *spi)
+{
+	struct qti_can *priv_data = spi_get_drvdata(spi);
+	u8 power_event = CMD_AP_POWEROFF_EVENT;
+	int ret;
+	priv_data->mcu_pwr_state = 1;
+
+	LOGDE("%s\n", __func__);
+	if (priv_data )
+		ret = qti_can_notify_power_events(priv_data, power_event);
+
+	msleep(500);
 }
 
 static int qti_can_remove(struct spi_device *spi)
@@ -1729,6 +1799,7 @@ static int qti_can_remove(struct spi_device *spi)
 	kobject_put(qti_fw_kobject);
 	kfree(g_fw_str);
 	destroy_workqueue(priv_data->tx_wq);
+	wakeup_source_unregister(priv_data->ws);
 	kfree(priv_data->rx_buf);
 	kfree(priv_data->tx_buf);
 	kfree(priv_data->assembly_buffer);
@@ -1745,7 +1816,6 @@ static int qti_can_suspend(struct device *dev)
 	struct qti_can *priv_data = NULL;
 	u8 power_event = CMD_SUSPEND_EVENT;
 	int ret = 0;
-
 	if (spi) {
 		priv_data = spi_get_drvdata(spi);
 		enable_irq_wake(spi->irq);
@@ -1793,6 +1863,7 @@ static int qti_can_suspend(struct device *dev)
 
 	if (spi) {
 		priv_data = spi_get_drvdata(spi);
+		enable_irq_wake(spi->irq);
 	} else {
 		ret = -1;
 	}
@@ -1816,6 +1887,7 @@ static int qti_can_resume(struct device *dev)
 	if (priv_data)
 		qti_can_rx_message(priv_data);
 
+	pm_wakeup_ws_event(priv_data->ws, WAKELOCK_TIMEOUT, true);
 	return ret;
 }
 #endif
@@ -1837,6 +1909,7 @@ static struct spi_driver qti_can_driver = {
 	},
 	.probe = qti_can_probe,
 	.remove = qti_can_remove,
+	.shutdown =  qti_can_shutdown,
 };
 module_spi_driver(qti_can_driver);
 
