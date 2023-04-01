@@ -33,6 +33,7 @@
 #include <linux/of_device.h>
 #include <linux/of_graph.h>
 #include <linux/regmap.h>
+#include <linux/regulator/consumer.h>
 
 #include <drm/drm_atomic_helper.h>
 #include <drm/drm_bridge.h>
@@ -40,7 +41,8 @@
 #include <drm/drm_of.h>
 #include <drm/drm_panel.h>
 #include <drm/drm_print.h>
-#include <drm/drm_probe_helper.h>
+#include <drm/drm_crtc.h>
+#include <drm/drm_crtc_helper.h>
 
 /* ID registers */
 #define REG_ID(n)				(0x00 + (n))
@@ -130,6 +132,18 @@
 #define  REG_IRQ_STAT_CHA_SOT_BIT_ERR		BIT(2)
 #define  REG_IRQ_STAT_CHA_PLL_UNLOCK		BIT(0)
 
+/**
+ * enum drm_lvds_dual_link_pixels - Pixel order of an LVDS dual-link connection
+ * @DRM_LVDS_DUAL_LINK_EVEN_ODD_PIXELS: Even pixels are expected to be generated
+ *    from the first port, odd pixels from the second port
+ * @DRM_LVDS_DUAL_LINK_ODD_EVEN_PIXELS: Odd pixels are expected to be generated
+ *    from the first port, even pixels from the second port
+ */
+enum drm_lvds_dual_link_pixels {
+	DRM_LVDS_DUAL_LINK_EVEN_ODD_PIXELS = 0,
+	DRM_LVDS_DUAL_LINK_ODD_EVEN_PIXELS = 1,
+};
+
 enum sn65dsi83_model {
 	MODEL_SN65DSI83,
 	MODEL_SN65DSI84,
@@ -144,6 +158,7 @@ struct sn65dsi83 {
 	struct mipi_dsi_device		*dsi;
 	struct drm_bridge		*panel_bridge;
 	struct gpio_desc		*enable_gpio;
+	struct regulator 		*vdd_en;
 	int				dsi_lanes;
 	bool				lvds_dual_link;
 	bool				lvds_dual_link_even_odd_swap;
@@ -239,13 +254,125 @@ static const struct regmap_config sn65dsi83_regmap_config = {
 	.max_register = REG_IRQ_STAT,
 };
 
+enum drm_of_lvds_pixels {
+	DRM_OF_LVDS_EVEN = BIT(0),
+	DRM_OF_LVDS_ODD = BIT(1),
+};
+
+static int drm_of_lvds_get_port_pixels_type(struct device_node *port_node)
+{
+	bool even_pixels =
+		of_property_read_bool(port_node, "dual-lvds-even-pixels");
+	bool odd_pixels =
+		of_property_read_bool(port_node, "dual-lvds-odd-pixels");
+
+	return (even_pixels ? DRM_OF_LVDS_EVEN : 0) |
+	       (odd_pixels ? DRM_OF_LVDS_ODD : 0);
+}
+
+static int drm_of_lvds_get_remote_pixels_type(
+			const struct device_node *port_node)
+{
+	struct device_node *endpoint = NULL;
+	int pixels_type = -EPIPE;
+
+	for_each_child_of_node(port_node, endpoint) {
+		struct device_node *remote_port;
+		int current_pt;
+
+		if (!of_node_name_eq(endpoint, "endpoint"))
+			continue;
+
+		remote_port = of_graph_get_remote_port(endpoint);
+		if (!remote_port) {
+			of_node_put(remote_port);
+			return -EPIPE;
+		}
+
+		current_pt = drm_of_lvds_get_port_pixels_type(remote_port);
+		of_node_put(remote_port);
+		if (pixels_type < 0)
+			pixels_type = current_pt;
+
+		/*
+		 * Sanity check, ensure that all remote endpoints have the same
+		 * pixel type. We may lift this restriction later if we need to
+		 * support multiple sinks with different dual-link
+		 * configurations by passing the endpoints explicitly to
+		 * drm_of_lvds_get_dual_link_pixel_order().
+		 */
+		if (!current_pt || pixels_type != current_pt)
+			return -EINVAL;
+	}
+
+	return pixels_type;
+}
+
+/**
+ * drm_of_lvds_get_dual_link_pixel_order - Get LVDS dual-link pixel order
+ * @port1: First DT port node of the Dual-link LVDS source
+ * @port2: Second DT port node of the Dual-link LVDS source
+ *
+ * An LVDS dual-link connection is made of two links, with even pixels
+ * transitting on one link, and odd pixels on the other link. This function
+ * returns, for two ports of an LVDS dual-link source, which port shall transmit
+ * the even and odd pixels, based on the requirements of the connected sink.
+ *
+ * The pixel order is determined from the dual-lvds-even-pixels and
+ * dual-lvds-odd-pixels properties in the sink's DT port nodes. If those
+ * properties are not present, or if their usage is not valid, this function
+ * returns -EINVAL.
+ *
+ * If either port is not connected, this function returns -EPIPE.
+ *
+ * @port1 and @port2 are typically DT sibling nodes, but may have different
+ * parents when, for instance, two separate LVDS encoders carry the even and odd
+ * pixels.
+ *
+ * Return:
+ * * DRM_LVDS_DUAL_LINK_EVEN_ODD_PIXELS - @port1 carries even pixels and @port2
+ *   carries odd pixels
+ * * DRM_LVDS_DUAL_LINK_ODD_EVEN_PIXELS - @port1 carries odd pixels and @port2
+ *   carries even pixels
+ * * -EINVAL - @port1 and @port2 are not connected to a dual-link LVDS sink, or
+ *   the sink configuration is invalid
+ * * -EPIPE - when @port1 or @port2 are not connected
+ */
+int drm_of_lvds_get_dual_link_pixel_order(const struct device_node *port1,
+					  const struct device_node *port2)
+{
+	int remote_p1_pt, remote_p2_pt;
+
+	if (!port1 || !port2)
+		return -EINVAL;
+
+	remote_p1_pt = drm_of_lvds_get_remote_pixels_type(port1);
+	if (remote_p1_pt < 0)
+		return remote_p1_pt;
+
+	remote_p2_pt = drm_of_lvds_get_remote_pixels_type(port2);
+	if (remote_p2_pt < 0)
+		return remote_p2_pt;
+
+	/*
+	 * A valid dual-lVDS bus is found when one remote port is marked with
+	 * "dual-lvds-even-pixels", and the other remote port is marked with
+	 * "dual-lvds-odd-pixels", bail out if the markers are not right.
+	 */
+	if (remote_p1_pt + remote_p2_pt != DRM_OF_LVDS_EVEN + DRM_OF_LVDS_ODD)
+		return -EINVAL;
+
+	return remote_p1_pt == DRM_OF_LVDS_EVEN ?
+		DRM_LVDS_DUAL_LINK_EVEN_ODD_PIXELS :
+		DRM_LVDS_DUAL_LINK_ODD_EVEN_PIXELS;
+}
+
 static struct sn65dsi83 *bridge_to_sn65dsi83(struct drm_bridge *bridge)
 {
 	return container_of(bridge, struct sn65dsi83, bridge);
 }
 
-static int sn65dsi83_attach(struct drm_bridge *bridge,
-			    enum drm_bridge_attach_flags flags)
+static int sn65dsi83_attach(struct drm_bridge *bridge)
 {
 	struct sn65dsi83 *ctx = bridge_to_sn65dsi83(bridge);
 	struct device *dev = ctx->dev;
@@ -267,8 +394,9 @@ static int sn65dsi83_attach(struct drm_bridge *bridge,
 
 	dsi = mipi_dsi_device_register_full(host, &info);
 	if (IS_ERR(dsi)) {
-		return dev_err_probe(dev, PTR_ERR(dsi),
-				     "failed to create dsi device\n");
+		dev_err(dev,
+				     "failed to create dsi device:%d\n",PTR_ERR(dsi));
+	       return PTR_ERR(dsi);
 	}
 
 	ctx->dsi = dsi;
@@ -282,9 +410,9 @@ static int sn65dsi83_attach(struct drm_bridge *bridge,
 		dev_err(dev, "failed to attach dsi to host\n");
 		goto err_dsi_attach;
 	}
-
+	dev_info(dev, "attach dsi to host\n");
 	return drm_bridge_attach(bridge->encoder, ctx->panel_bridge,
-				 &ctx->bridge, flags);
+				 &ctx->bridge);
 
 err_dsi_attach:
 	mipi_dsi_device_unregister(dsi);
@@ -303,6 +431,7 @@ static void sn65dsi83_pre_enable(struct drm_bridge *bridge)
 	gpiod_set_value(ctx->enable_gpio, 0);
 	usleep_range(10000, 11000);
 	gpiod_set_value(ctx->enable_gpio, 1);
+	regulator_enable(ctx->vdd_en);
 	usleep_range(1000, 1100);
 }
 
@@ -371,6 +500,7 @@ static void sn65dsi83_enable(struct drm_bridge *bridge)
 	u16 val;
 	int ret;
 
+	dev_info(ctx->dev, "enable with test pattern \n");
 	/* Clear reset, disable PLL */
 	regmap_write(ctx->regmap, REG_RC_RESET, 0x00);
 	regmap_write(ctx->regmap, REG_RC_PLL_EN, 0x00);
@@ -400,6 +530,7 @@ static void sn65dsi83_enable(struct drm_bridge *bridge)
 	       REG_LVDS_FMT_VS_NEG_POLARITY : 0);
 
 	/* Set up bits-per-pixel, 18bpp or 24bpp. */
+	ctx->lvds_format_24bpp = true;
 	if (ctx->lvds_format_24bpp) {
 		val |= REG_LVDS_FMT_CHA_24BPP_MODE;
 		if (ctx->lvds_dual_link)
@@ -423,7 +554,7 @@ static void sn65dsi83_enable(struct drm_bridge *bridge)
 		(ctx->lvds_dual_link_even_odd_swap ?
 		 REG_LVDS_LANE_EVEN_ODD_SWAP : 0) |
 		REG_LVDS_LANE_CHA_LVDS_TERM |
-		REG_LVDS_LANE_CHB_LVDS_TERM);
+		REG_LVDS_LANE_CHB_LVDS_TERM|REG_LVDS_LANE_CHA_REVERSE_LVDS);
 	regmap_write(ctx->regmap, REG_LVDS_CM, 0x00);
 
 	val = cpu_to_le16(ctx->mode.hdisplay);
@@ -449,7 +580,7 @@ static void sn65dsi83_enable(struct drm_bridge *bridge)
 		     ctx->mode.hsync_start - ctx->mode.hdisplay);
 	regmap_write(ctx->regmap, REG_VID_CHA_VERTICAL_FRONT_PORCH,
 		     ctx->mode.vsync_start - ctx->mode.vdisplay);
-	regmap_write(ctx->regmap, REG_VID_CHA_TEST_PATTERN, 0x00);
+	regmap_write(ctx->regmap, REG_VID_CHA_TEST_PATTERN, 0x8);
 
 	/* Enable PLL */
 	regmap_write(ctx->regmap, REG_RC_PLL_EN, REG_RC_PLL_EN_PLL_EN);
@@ -487,11 +618,11 @@ static void sn65dsi83_post_disable(struct drm_bridge *bridge)
 
 	/* Put the chip in reset, pull EN line low. */
 	gpiod_set_value(ctx->enable_gpio, 0);
+	regulator_disable(ctx->vdd_en);
 }
 
 static enum drm_mode_status
 sn65dsi83_mode_valid(struct drm_bridge *bridge,
-		     const struct drm_display_info *info,
 		     const struct drm_display_mode *mode)
 {
 	/* LVDS output clock range 25..154 MHz */
@@ -504,8 +635,8 @@ sn65dsi83_mode_valid(struct drm_bridge *bridge,
 }
 
 static void sn65dsi83_mode_set(struct drm_bridge *bridge,
-			       const struct drm_display_mode *mode,
-			       const struct drm_display_mode *adj)
+			       struct drm_display_mode *mode,
+			       struct drm_display_mode *adj)
 {
 	struct sn65dsi83 *ctx = bridge_to_sn65dsi83(bridge);
 
@@ -516,45 +647,6 @@ static bool sn65dsi83_mode_fixup(struct drm_bridge *bridge,
 			       const struct drm_display_mode *mode,
 			       struct drm_display_mode *adj)
 {
-	struct sn65dsi83 *ctx = bridge_to_sn65dsi83(bridge);
-	u32 input_bus_format = MEDIA_BUS_FMT_RGB888_1X24;
-	struct drm_encoder *encoder = bridge->encoder;
-	struct drm_device *ddev = encoder->dev;
-	struct drm_connector *connector;
-
-	/* The DSI format is always RGB888_1X24 */
-	list_for_each_entry(connector, &ddev->mode_config.connector_list, head) {
-		switch (connector->display_info.bus_formats[0]) {
-		case MEDIA_BUS_FMT_RGB666_1X7X3_SPWG:
-			ctx->lvds_format_24bpp = false;
-			ctx->lvds_format_jeida = true;
-			break;
-		case MEDIA_BUS_FMT_RGB888_1X7X4_JEIDA:
-			ctx->lvds_format_24bpp = true;
-			ctx->lvds_format_jeida = true;
-			break;
-		case MEDIA_BUS_FMT_RGB888_1X7X4_SPWG:
-			ctx->lvds_format_24bpp = true;
-			ctx->lvds_format_jeida = false;
-			break;
-		default:
-			/*
-			 * Some bridges still don't set the correct
-			 * LVDS bus pixel format, use SPWG24 default
-			 * format until those are fixed.
-			 */
-			ctx->lvds_format_24bpp = true;
-			ctx->lvds_format_jeida = false;
-			dev_warn(ctx->dev,
-				"Unsupported LVDS bus format 0x%04x, please check output bridge driver. Falling back to SPWG24.\n",
-				connector->display_info.bus_formats[0]);
-			break;
-		}
-
-		drm_display_info_set_bus_formats(&connector->display_info,
-						 &input_bus_format, 1);
-	}
-
 	return true;
 }
 
@@ -582,10 +674,14 @@ static int sn65dsi83_parse_dt(struct sn65dsi83 *ctx, enum sn65dsi83_model model)
 	ctx->host_node = of_graph_get_remote_port_parent(endpoint);
 	of_node_put(endpoint);
 
-	if (ctx->dsi_lanes < 0 || ctx->dsi_lanes > 4)
+	if (ctx->dsi_lanes < 0 || ctx->dsi_lanes > 4){
+		dev_err(dev, "lanes %d\n",ctx->dsi_lanes );
 		return -EINVAL;
-	if (!ctx->host_node)
+	}
+	if (!ctx->host_node){
+		dev_err(dev, "host node null\n");
 		return -ENODEV;
+	}
 
 	ctx->lvds_dual_link = false;
 	ctx->lvds_dual_link_even_odd_swap = false;
@@ -610,15 +706,20 @@ static int sn65dsi83_parse_dt(struct sn65dsi83 *ctx, enum sn65dsi83_model model)
 		}
 	}
 
-	ret = drm_of_find_panel_or_bridge(dev->of_node, 2, 0, &panel, &panel_bridge);
-	if (ret < 0)
+	ret = drm_of_find_panel_or_bridge(dev->of_node, 1, 0, &panel, &panel_bridge);
+	if (ret < 0){
+		dev_err(dev, "failed to find panel or bridge,%d\n",ret);
 		return ret;
-	if (panel) {
-		panel_bridge = devm_drm_panel_bridge_add(dev, panel);
-		if (IS_ERR(panel_bridge))
-			return PTR_ERR(panel_bridge);
 	}
-
+	dev_info(dev, "find panel or bridge\n");
+	if (panel) {
+		panel_bridge = devm_drm_panel_bridge_add(dev, panel,DRM_MODE_CONNECTOR_LVDS);
+		if (IS_ERR(panel_bridge)){
+			dev_err(dev, "failed to add panel ,%d\n",PTR_ERR(panel_bridge));
+			return PTR_ERR(panel_bridge);
+		}
+	}
+	dev_info(dev, "add panel bridge\n");
 	ctx->panel_bridge = panel_bridge;
 
 	return 0;
@@ -645,26 +746,54 @@ static int sn65dsi83_probe(struct i2c_client *client,
 		model = id->driver_data;
 	}
 
-	ctx->enable_gpio = devm_gpiod_get(ctx->dev, "enable", GPIOD_OUT_LOW);
-	if (IS_ERR(ctx->enable_gpio))
+	ctx->enable_gpio = devm_gpiod_get(ctx->dev, "enable", GPIOD_OUT_HIGH);
+	if (IS_ERR(ctx->enable_gpio)){
+		dev_err(dev, "failed to get enable gpio\n");
 		return PTR_ERR(ctx->enable_gpio);
+	}
+
+	/*ctx->enable_gpio1 = devm_gpiod_get(ctx->dev, "vdd", GPIOD_OUT_HIGH);
+	if (IS_ERR(ctx->enable_gpio1)){
+		dev_err(dev, "failed to get enable gpio1 and put enable  gpio\n");
+		devm_gpiod_put(ctx->dev,ctx->enable_gpio);
+		return PTR_ERR(ctx->enable_gpio);
+	}*/
+
+	ctx->vdd_en = regulator_get(ctx->dev, "vdd_en");
+		if (IS_ERR(ctx->vdd_en)) {
+			dev_err(dev,"regulator get of vdd_en failed");
+			ret = PTR_ERR(ctx->vdd_en);
+			ctx->vdd_en = NULL;
+			goto error;
+	}
 
 	ret = sn65dsi83_parse_dt(ctx, model);
-	if (ret)
-		return ret;
+	if (ret){
+		dev_err(dev, "failed to parse dt put gpios enable and enable1 \n");
+		goto error_en;
+	}
 
 	ctx->regmap = devm_regmap_init_i2c(client, &sn65dsi83_regmap_config);
-	if (IS_ERR(ctx->regmap))
+	if (IS_ERR(ctx->regmap)){
+		dev_err(dev, "failed to init regmap\n");
+		devm_gpiod_put(ctx->dev,ctx->enable_gpio);
+		regulator_put(ctx->vdd_en);
 		return PTR_ERR(ctx->regmap);
-
+	}
 	dev_set_drvdata(dev, ctx);
 	i2c_set_clientdata(client, ctx);
 
 	ctx->bridge.funcs = &sn65dsi83_funcs;
 	ctx->bridge.of_node = dev->of_node;
 	drm_bridge_add(&ctx->bridge);
-
+	dev_info(dev, "sn65dsi83_probed\n");
 	return 0;
+error_en:
+	regulator_put(ctx->vdd_en);
+error:
+	dev_err(dev, "sn65dsi83_  error put enable gpio gpio1 \n");
+	devm_gpiod_put(ctx->dev,ctx->enable_gpio);
+	return ret;
 }
 
 static int sn65dsi83_remove(struct i2c_client *client)
