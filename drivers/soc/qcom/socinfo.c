@@ -3,6 +3,10 @@
  * Copyright (c) 2009-2021, The Linux Foundation. All rights reserved.
  */
 
+/*
+ * Copyright (c) 2023, Qualcomm Innovation Center, Inc. All rights reserved.
+ */
+
 #define pr_fmt(fmt) "%s: " fmt, __func__
 
 #include <linux/export.h>
@@ -1839,7 +1843,7 @@ int __init socinfo_init(void)
 		pr_warn("New IDs added! ID => CPU mapping needs an update.\n");
 
 	cur_cpu = cpu_of_id[socinfo->v0_1.id].generic_soc_type;
-	boot_stats_init();
+	//boot_stats_init();
 	socinfo_print();
 	arch_read_hardware_id = msm_read_hardware_id;
 	socinfo_init_done = true;
