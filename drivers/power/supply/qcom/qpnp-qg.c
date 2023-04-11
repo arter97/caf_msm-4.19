@@ -3,6 +3,10 @@
  * Copyright (c) 2018-2021 The Linux Foundation. All rights reserved.
  */
 
+/*
+ * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ */
+
 #define pr_fmt(fmt)	"QG-K: %s: " fmt, __func__
 
 #include <linux/debugfs.h>
@@ -103,7 +107,10 @@ static bool is_battery_present(struct qpnp_qg *chip)
 	u8 reg = 0;
 	int rc;
 
-	if (chip->qg_version == QG_LITE) {
+	/* For AUTO platform, do not perform battery detection */
+	if (chip->dt.batt_less) {
+		present = false;
+	} else if (chip->qg_version == QG_LITE) {
 		rc = qg_read(chip, chip->qg_base + QG_STATUS2_REG, &reg, 1);
 		if (rc < 0)
 			pr_err("Failed to read battery presence, rc=%d\n", rc);
@@ -4424,6 +4431,10 @@ static int qg_parse_dt(struct qpnp_qg *chip)
 		else
 			chip->dt.tcss_entry_soc = temp;
 	}
+
+	/* For battery less AUTO platform */
+	if (of_property_read_bool(node, "qcom,batt-less"))
+		chip->dt.batt_less = true;
 
 	chip->dt.bass_enable = of_property_read_bool(node, "qcom,bass-enable");
 
