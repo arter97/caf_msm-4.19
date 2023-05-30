@@ -1279,10 +1279,12 @@ static void retract_page_tables(struct address_space *mapping, pgoff_t pgoff)
 		 * the system too much.
 		 */
 		if (down_write_trylock(&vma->vm_mm->mmap_sem)) {
+                        vm_write_begin(vma);
 			spinlock_t *ptl = pmd_lock(vma->vm_mm, pmd);
 			/* assume page table is clear */
 			_pmd = pmdp_collapse_flush(vma, addr, pmd);
 			spin_unlock(ptl);
+                        vm_write_end(vma);
 			up_write(&vma->vm_mm->mmap_sem);
 			mm_dec_nr_ptes(vma->vm_mm);
 			pte_free(vma->vm_mm, pmd_pgtable(_pmd));
