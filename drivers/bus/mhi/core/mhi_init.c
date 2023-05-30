@@ -2301,6 +2301,9 @@ static int mhi_driver_remove(struct device *dev)
 		mutex_unlock(&mhi_chan->mutex);
 	}
 
+	/* destroy the device */
+	mhi_drv->remove(mhi_dev);
+
 	/* wait for each channel to close and reset both channels */
 	for (dir = 0; dir < 2; dir++) {
 		mhi_chan = dir ? mhi_dev->ul_chan : mhi_dev->dl_chan;
@@ -2311,7 +2314,7 @@ static int mhi_driver_remove(struct device *dev)
 		/* unbind request from userspace, wait for channel reset */
 		if (!(mhi_cntrl->power_down ||
 		    MHI_PM_IN_ERROR_STATE(mhi_cntrl->pm_state)) &&
-		    ch_state[dir] != MHI_CH_STATE_DISABLED && !interrupted) {
+		    mhi_chan->ch_state != MHI_CH_STATE_DISABLED && !interrupted) {
 			MHI_ERR("Channel %s busy, wait for it to be reset\n",
 				mhi_dev->chan_name);
 			ret = wait_event_interruptible(mhi_cntrl->state_event,
@@ -2334,9 +2337,6 @@ static int mhi_driver_remove(struct device *dev)
 
 		mutex_unlock(&mhi_chan->mutex);
 	}
-
-	/* destroy the device */
-	mhi_drv->remove(mhi_dev);
 
 	/* de_init channel if it was enabled */
 	for (dir = 0; dir < 2; dir++) {
