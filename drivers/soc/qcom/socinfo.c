@@ -427,6 +427,10 @@ static struct msm_soc_info cpu_of_id[] = {
 	[473] = {MSM_CPU_SCUBAIOT, "SCUBAIIOT"},
 	[474] = {MSM_CPU_SCUBAPIOT, "SCUBAPIIOT"},
 
+	/* QWM/S Auto 2W ID */
+	[621] = {MSM_CPU_2W_AUTO, "QWMAUTO"},
+	[622] = {MSM_CPU_2W_AUTOP, "QWSAUTO"},
+
 	/* BENGAL-IOT ID */
 	[469] = {MSM_CPU_BENGAL_IOT, "BENGAL-IOT"},
 
