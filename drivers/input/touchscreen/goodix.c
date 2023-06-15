@@ -1065,7 +1065,7 @@ static int goodix_ts_probe(struct i2c_client *client,
 		}
 
 		ts->vcc_i2c = regulator_get(dev, "vcc_i2c");
-		if (IS_ERR(ts->vdd_ana)) {
+		if (IS_ERR(ts->vcc_i2c)) {
 			dev_err(dev,"regulator get of vcc_i2c failed");
 			ret = PTR_ERR(ts->vcc_i2c);
 			ts->vcc_i2c = NULL;
@@ -1218,15 +1218,17 @@ static int goodix_ts_suspend(struct goodix_ts_data *ts){
 		return -EAGAIN;
 	}
 
+	if (ts->regulator_support) {
+		regulator_en_dis(ts, false);
+		msleep(20);
+	}
+
 	/*
 	 * The datasheet specifies that the interval between sending screen-off
 	 * command and wake-up should be longer than 58 ms. To avoid waking up
 	 * sooner, delay 58ms here.
 	 */
 	msleep(58);
-
-	if (ts->regulator_support)
-		regulator_en_dis(ts, false);
 
 	dev_dbg(&ts->client->dev, "%s: exit\n", __func__);
 	return 0;
@@ -1237,8 +1239,12 @@ static int goodix_ts_resume(struct goodix_ts_data *ts){
 
 	dev_dbg(&ts->client->dev, "%s: enter\n", __func__);
 
-	if (ts->regulator_support)
-		regulator_en_dis(ts, true);
+	if (ts->regulator_support) {
+		if (!(regulator_is_enabled(ts->vdd_ana))||
+			!(regulator_is_enabled(ts->vcc_i2c)))
+			regulator_en_dis(ts, true);
+			msleep(20);
+	}
 
 	if (!ts->gpiod_int || !ts->gpiod_rst) {
 		enable_irq(ts->client->irq);
