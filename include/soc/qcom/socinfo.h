@@ -209,6 +209,8 @@ enum msm_cpu {
 	MSM_CPU_QM215,
 	MSM_CPU_8953,
 	MSM_CPU_SDM450,
+	MSM_CPU_2W_AUTO,
+	MSM_CPU_2W_AUTOP,
 };
 
 struct msm_soc_info {
