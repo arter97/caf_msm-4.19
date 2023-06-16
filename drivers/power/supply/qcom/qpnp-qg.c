@@ -1808,6 +1808,10 @@ static int qg_get_charge_counter(struct qpnp_qg *chip, int *charge_counter)
 	int rc, cc_soc = 0;
 	int64_t temp = 0;
 
+	/* For AUTO platforms, battery info comes from MCU */
+	if (chip->dt.batt_less)
+		return 0;
+
 	if (is_debug_batt_id(chip) || chip->battery_missing) {
 		*charge_counter = -EINVAL;
 		return 0;
@@ -2387,6 +2391,10 @@ static int qg_charge_full_update(struct qpnp_qg *chip)
 	union power_supply_propval prop = {0, };
 	int rc, recharge_soc, health;
 
+	/* For AUTO platforms, battery info comes from MCU */
+	if (chip->dt.batt_less)
+		return 0;
+
 	if (!chip->dt.hold_soc_while_full)
 		goto out;
 
@@ -2661,6 +2669,10 @@ static void qg_status_change_work(struct work_struct *work)
 	union power_supply_propval prop = {0, };
 	int rc = 0, batt_temp = 0;
 	bool input_present = false;
+
+	/* For AUTO platforms, battery info comes from MCU */
+	if (chip->dt.batt_less)
+		return;
 
 	if (!is_batt_available(chip)) {
 		pr_debug("batt-psy not available\n");
