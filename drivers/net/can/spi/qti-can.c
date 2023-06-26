@@ -364,6 +364,10 @@ static void qti_can_receive_frame(struct qti_can *priv_data,
 	cf->can_id = le32_to_cpu(frame->mid);
 	cf->can_dlc = get_can_dlc(frame->dlc);
 
+	/* For 29-bit address, set CAN Extended Frame Flag */
+	if ( cf->can_id > 0x7FF)
+		cf->can_id |= CAN_EFF_FLAG ;
+
 	for (i = 0; i < cf->can_dlc; i++)
 		cf->data[i] = frame->data[i];
 
@@ -862,6 +866,7 @@ static int qti_can_write(struct qti_can *priv_data,
 	priv_data->xfer_length = XFER_BUFFER_SIZE;
 
 	req = (struct spi_mosi *)tx_buf;
+
 	if (priv_data->driver_mode == DRIVER_MODE_RAW_FRAMES) {
 		req->cmd = CMD_CAN_SEND_FRAME;
 		req->len = sizeof(struct can_write_req) + 8;
