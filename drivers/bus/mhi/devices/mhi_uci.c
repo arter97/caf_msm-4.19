@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /* Copyright (c) 2018-2020, The Linux Foundation. All rights reserved.*/
+/* Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved. */
 
 #include <linux/cdev.h>
 #include <linux/device.h>
@@ -714,10 +715,6 @@ static const struct mhi_device_id mhi_uci_match_table[] = {
 	{ .chan = "QMI1", .driver_data = 0x1000 },
 	{ .chan = "TF", .driver_data = 0x1000 },
 	{ .chan = "DUN", .driver_data = 0x1000 },
-	{ .chan = "QAIC_DIAG", .driver_data = 0x1000 },
-	{ .chan = "QAIC_SAHARA", .driver_data = 0x8000 },
-	{ .chan = "QAIC_QDSS", .driver_data = 0x1000 },
-	{ .chan = "QAIC_TIMESYNC", .driver_data = 0x1000 },
 	{},
 };
 
