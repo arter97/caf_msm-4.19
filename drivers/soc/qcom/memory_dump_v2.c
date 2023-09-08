@@ -644,8 +644,21 @@ static int msm_dump_data_add_minidump(struct msm_dump_entry *entry)
 	return msm_minidump_add_region(&md_entry);
 }
 
+static struct msm_dump_entry *msm_dump_entry_get(struct msm_dump_table *table,
+						 struct msm_dump_entry *entry)
+{
+	int i;
+
+	for (i = 0; i < MAX_NUM_ENTRIES; i++) {
+		if (table->entries[i].id == entry->id)
+			return &table->entries[i];
+	}
+
+	return NULL;
+}
+
 static int register_dump_table_entry(enum msm_dump_table_ids id,
-					struct msm_dump_entry *entry)
+				     struct msm_dump_entry *entry)
 {
 	struct msm_dump_entry *e;
 	struct msm_dump_table *table;
@@ -657,11 +670,15 @@ static int register_dump_table_entry(enum msm_dump_table_ids id,
 	if (!table || table->num_entries >= MAX_NUM_ENTRIES)
 		return -EINVAL;
 
-	e = &table->entries[table->num_entries];
+	e = msm_dump_entry_get(table, entry);
+	if (!e) {
+		e = &table->entries[table->num_entries];
+		table->num_entries++;
+	}
+
 	e->id = entry->id;
 	e->type = MSM_DUMP_TYPE_DATA;
 	e->addr = entry->addr;
-	table->num_entries++;
 
 	dmac_flush_range(table, (void *)table + sizeof(struct msm_dump_table));
 	return 0;
