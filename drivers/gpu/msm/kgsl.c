@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2008-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <uapi/linux/sched/types.h>
@@ -2126,6 +2127,10 @@ long kgsl_ioctl_gpu_aux_command(struct kgsl_device_private *dev_priv,
 		return -EINVAL;
 
 	if (!(param->flags & KGSL_GPU_AUX_COMMAND_TIMELINE))
+		return -EINVAL;
+
+	if ((param->flags & KGSL_GPU_AUX_COMMAND_SYNC) &&
+		(param->numsyncs > KGSL_MAX_SYNCPOINTS))
 		return -EINVAL;
 
 	context = kgsl_context_get_owner(dev_priv, param->context_id);
