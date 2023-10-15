@@ -1520,10 +1520,11 @@ cleanup_privdata:
 	return NULL;
 }
 
+#define FW_STR_SZ	8
 static ssize_t show_mcu_firmware(struct kobject *kobj,
 			struct kobj_attribute *attr,
 			char *buf) {
-	char fw_ver_str[6];
+	char fw_ver_str[FW_STR_SZ];
 	uint8_t fw_ver_maj, fw_ver_min;
 	char *pfw_ver_str = fw_ver_str;
 
@@ -1534,11 +1535,11 @@ static ssize_t show_mcu_firmware(struct kobject *kobj,
 	if (g_fw_str->maj != 0) {
 		fw_ver_maj = g_fw_str->maj;
 		fw_ver_min = g_fw_str->min;
-		strcpy(fw_ver_str, "fw: ver");
+		strlcpy(fw_ver_str, "fw: ver", sizeof(fw_ver_str));
 	} else {
 		fw_ver_maj = 0;
 		fw_ver_min = 0;
-		strcpy(fw_ver_str, "dummy:");
+		strlcpy(fw_ver_str, "dummy:", sizeof(fw_ver_str));
 	}
 	return sprintf(buf, "%s (%d.%d)\n", pfw_ver_str, fw_ver_maj, fw_ver_min);
 }
@@ -1784,12 +1785,14 @@ static void qti_can_shutdown(struct spi_device *spi)
 	struct qti_can *priv_data = spi_get_drvdata(spi);
 	u8 power_event = CMD_AP_POWEROFF_EVENT;
 	int ret;
-	priv_data->mcu_pwr_state = 1;
 
-	LOGDE("%s\n", __func__);
-	if (priv_data )
+	if (!priv_data){
+		LOGDE("%s NULL pointer passed\n", __func__);
+		return;
+	} else {
+		priv_data->mcu_pwr_state = 1;
 		ret = qti_can_notify_power_events(priv_data, power_event);
-
+	}
 	msleep(500);
 }
 
@@ -1891,10 +1894,10 @@ static int qti_can_resume(struct device *dev)
 		ret = -1;
 	}
 
-	if (priv_data)
+	if (priv_data) {
 		qti_can_rx_message(priv_data);
-
-	pm_wakeup_ws_event(priv_data->ws, WAKELOCK_TIMEOUT, true);
+		pm_wakeup_ws_event(priv_data->ws, WAKELOCK_TIMEOUT, true);
+	}
 	return ret;
 }
 #endif
