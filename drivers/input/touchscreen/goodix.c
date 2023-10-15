@@ -902,7 +902,7 @@ err_release_cfg:
 
 static int goodix_get_sensor_id(struct goodix_ts_data *ts){
 	int ret = 0;
-	u8 buf;
+	u8 buf = 0;
 
 	ret = goodix_i2c_read(ts->client, GOODIX_REG_SENSOR_ID, &buf, sizeof(buf));
 	if(ret){
