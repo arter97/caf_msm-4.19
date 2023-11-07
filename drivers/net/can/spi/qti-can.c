@@ -1541,7 +1541,7 @@ static ssize_t show_mcu_firmware(struct kobject *kobj,
 		fw_ver_min = 0;
 		strlcpy(fw_ver_str, "dummy:", sizeof(fw_ver_str));
 	}
-	return sprintf(buf, "%s (%d.%d)\n", pfw_ver_str, fw_ver_maj, fw_ver_min);
+	return snprintf(buf, sizeof(buf), "%s (%d.%d)\n", pfw_ver_str, fw_ver_maj, fw_ver_min);
 }
 
 static struct kobj_attribute fw_version_attr = __ATTR(version, 0664, show_mcu_firmware, NULL);
@@ -1787,7 +1787,7 @@ static void qti_can_shutdown(struct spi_device *spi)
 	int ret;
 
 	if (!priv_data){
-		LOGDE("%s NULL pointer passed\n", __func__);
+		pr_err("%s NULL pointer passed\n", __func__);
 		return;
 	} else {
 		priv_data->mcu_pwr_state = 1;
