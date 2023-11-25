@@ -1541,7 +1541,7 @@ static ssize_t show_mcu_firmware(struct kobject *kobj,
 		fw_ver_min = 0;
 		strlcpy(fw_ver_str, "dummy:", sizeof(fw_ver_str));
 	}
-	return snprintf(buf, sizeof(buf), "%s (%d.%d)\n", pfw_ver_str, fw_ver_maj, fw_ver_min);
+	return snprintf(buf, PAGE_SIZE, "%s (%d.%d)\n", pfw_ver_str, fw_ver_maj, fw_ver_min);
 }
 
 static struct kobj_attribute fw_version_attr = __ATTR(version, 0664, show_mcu_firmware, NULL);
